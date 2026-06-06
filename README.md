@@ -1,4 +1,4 @@
-# STS Collective — Travel WiFi Canary
+# Travel WiFi Canary
 
 A compact, passive 2.4 GHz WiFi awareness sensor for the **M5Stack Atom Lite** (ESP32).
 
@@ -160,7 +160,7 @@ The device logs everything at 115200 baud. Example output:
 
 ```
 ==============================================
- STS Collective — Travel WiFi Canary v1.0
+ Travel WiFi Canary v1.0
  Passive 2.4 GHz awareness sensor
 ==============================================
 [canary] setup done — starting baseline learning
@@ -222,4 +222,4 @@ wifi-canary/
 
 ## License
 
-STS Collective. Passive awareness only. Not for offensive use.
+Passive awareness only. Not for offensive use.
