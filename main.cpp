@@ -1,5 +1,4 @@
 /*
- * STS Collective — Travel WiFi Canary
  * Target:  M5Stack Atom Lite  (ESP32, single SK6812 RGB LED on GPIO27)
  * Purpose: Passive 2.4 GHz WiFi awareness sensor.
  *          Monitors for deauth bursts, evil-twin / open-clone SSIDs,
