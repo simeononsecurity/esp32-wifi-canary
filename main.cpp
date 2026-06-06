@@ -835,7 +835,7 @@ void setup() {
     delay(500);
     Serial.println();
     Serial.println("==============================================");
-    Serial.println(" STS Collective — Travel WiFi Canary v1.0");
+    Serial.println("Travel WiFi Canary v1.0");
     Serial.println(" Passive 2.4 GHz awareness sensor");
     Serial.println("==============================================");
 
