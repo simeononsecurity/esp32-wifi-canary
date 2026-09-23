@@ -181,6 +181,10 @@ typedef struct {
     uint32_t      broadcastCount;
     unsigned long windowStart;
     bool          inUse;
+    uint8_t       reportedLevel;     // 0=none, 1=caution, 2=alert — highest
+                                      // level already reported for the
+                                      // current window (see bug below)
+    bool          broadcastReported; // same, for the broadcast-deauth notice
 } DeauthSrc;
 
 static DeauthSrc g_deauthSrc[MAX_DEAUTH_SOURCES];
@@ -489,6 +493,8 @@ static void drainDeauthQueue() {
                     slot->count = slot->broadcastCount = 0;
                     slot->windowStart = now;
                     slot->inUse = true;
+                    slot->reportedLevel = 0;
+                    slot->broadcastReported = false;
                     break;
                 }
             }
@@ -498,6 +504,8 @@ static void drainDeauthQueue() {
         if (now - slot->windowStart > DEAUTH_WINDOW_MS) {
             slot->count = slot->broadcastCount = 0;
             slot->windowStart = now;
+            slot->reportedLevel = 0;
+            slot->broadcastReported = false;
         }
         slot->count++;
         if (isBroadcastMAC(frame.dst)) slot->broadcastCount++;
@@ -512,18 +520,25 @@ static void analyzeDeauthSources() {
         uint32_t cnt  = g_deauthSrc[i].count;
         uint32_t bcnt = g_deauthSrc[i].broadcastCount;
         if (cnt >= (uint32_t)DEAUTH_ALERT_THRESHOLD) {
-            scoreAdd(4, "deauth/disassoc burst (alert-level rate)");
-            Serial.printf("[canary] DEAUTH ALERT: %lu f/5s src=%02x:%02x:%02x:...\n",
-                          (unsigned long)cnt,
-                          g_deauthSrc[i].src[0], g_deauthSrc[i].src[1], g_deauthSrc[i].src[2]);
+            if (g_deauthSrc[i].reportedLevel < 2) {
+                scoreAdd(4, "deauth/disassoc burst (alert-level rate)");
+                Serial.printf("[canary] DEAUTH ALERT: %lu f/5s src=%02x:%02x:%02x:...\n",
+                              (unsigned long)cnt,
+                              g_deauthSrc[i].src[0], g_deauthSrc[i].src[1], g_deauthSrc[i].src[2]);
+                g_deauthSrc[i].reportedLevel = 2;
+            }
         } else if (cnt >= (uint32_t)DEAUTH_CAUTION_THRESHOLD) {
-            scoreAdd(2, "deauth/disassoc burst (elevated rate)");
-            Serial.printf("[canary] DEAUTH caution: %lu f/5s src=%02x:%02x:%02x:...\n",
-                          (unsigned long)cnt,
-                          g_deauthSrc[i].src[0], g_deauthSrc[i].src[1], g_deauthSrc[i].src[2]);
+            if (g_deauthSrc[i].reportedLevel < 1) {
+                scoreAdd(2, "deauth/disassoc burst (elevated rate)");
+                Serial.printf("[canary] DEAUTH caution: %lu f/5s src=%02x:%02x:%02x:...\n",
+                              (unsigned long)cnt,
+                              g_deauthSrc[i].src[0], g_deauthSrc[i].src[1], g_deauthSrc[i].src[2]);
+                g_deauthSrc[i].reportedLevel = 1;
+            }
         }
-        if (bcnt >= (uint32_t)DEAUTH_BROADCAST_THRESHOLD) {
+        if (bcnt >= (uint32_t)DEAUTH_BROADCAST_THRESHOLD && !g_deauthSrc[i].broadcastReported) {
             scoreAdd(1, "broadcast deauth frames observed");
+            g_deauthSrc[i].broadcastReported = true;
         }
     }
 }
