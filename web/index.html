@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://unpkg.com; style-src 'self'; connect-src 'self'">
+  <title>WiFi Canary Console</title>
+  <link rel="stylesheet" href="./style.css">
+  <script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js"></script>
+  <script type="module" src="./app.js"></script>
+</head>
+<body>
+  <header><p class="eyebrow">LOCAL DEVICE TOOL</p><h1>WiFi Canary</h1><p>Flash, configure, and inspect your detector. Browser data stays local.</p></header>
+  <main>
+    <section><h2>Flash firmware</h2><label>Board <select id="board-select"><option value="atom-lite">Atom Lite</option><option value="esp32dev">ESP32 DevKit</option><option value="atom-echo">Atom Echo</option><option value="atom-voice">Atom Voice</option><option value="m5stack-basic">M5Stack Basic</option><option value="m5stack-core2-aws">Core2 for AWS</option><option value="m5stickc-plus-se">M5StickC Plus SE</option><option value="lilygo-t-dongle-c5">LILYGO T-Dongle C5, experimental</option></select></label><esp-web-install-button id="installer" manifest="./manifests/atom-lite.json"></esp-web-install-button><p>Erase only when recovery requires a clean device. Erasing removes saved configuration and history.</p></section>
+    <section><h2>Pre-flash configuration</h2><div class="grid"><label>Sensitivity <select id="sensitivity"><option value="0">Low</option><option value="1" selected>Standard</option><option value="2">High</option></select></label><label>Baseline scans <input id="baseline-scans" type="number" min="1" max="12" value="3"></label><label>LED brightness <input id="brightness" type="number" min="0" max="255" value="120"></label><label>Alert hold, seconds <input id="alert-hold" type="number" min="3" max="120" value="15"></label></div><button id="config-export">Download config image</button><p>Flash this 34-byte image at offset 0x290000 after firmware. Invalid data falls back to defaults.</p></section>
+    <section><h2>Live dashboard</h2><button id="connect">Connect serial</button><span id="connection">Disconnected</span><span id="parser-error" role="alert"></span><div class="metrics"><article><small>State</small><strong id="state">unknown</strong></article><article><small>Score</small><strong id="score">0</strong></article><article><small>Channel</small><strong id="channel">-</strong></article><article><small>RSSI</small><strong id="rssi">-</strong></article><article><small>Queue drops</small><strong id="drops">0</strong></article></div><dl><dt>Device</dt><dd id="device_id"></dd><dt>Board</dt><dd id="board"></dd><dt>Reason</dt><dd id="reason"></dd><dt>SSID</dt><dd id="ssid"></dd><dt>BSSID</dt><dd id="bssid"></dd></dl><button id="json-export">Export JSON</button><button id="csv-export">Export CSV</button><div class="table-wrap"><table><thead><tr><th>Uptime</th><th>Device</th><th>Event</th><th>Detector</th><th>Score</th><th>Reason</th></tr></thead><tbody id="events"></tbody></table></div></section>
+  </main>
+</body>
+</html>

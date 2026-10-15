@@ -1,5 +1,8 @@
 # Name,   Type, SubType,  Offset,   Size,     Flags
 nvs,      data, nvs,     0x9000,   0x5000,
 otadata,  data, ota,     0xe000,   0x2000,
-app0,     app,  ota_0,   0x10000,  0x2E0000,
-spiffs,   data, spiffs,  0x2F0000, 0x100000,
+app0,     app,  factory, 0x10000,  0x280000,
+canarycfg,data, 0x40,    0x290000, 0x1000,
+canarylog,data, 0x41,    0x291000, 0x5F000,
+coredump, data, coredump,0x2F0000, 0x10000,
+spiffs,   data, spiffs,  0x300000, 0x100000,

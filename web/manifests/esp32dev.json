@@ -1,0 +1,1 @@
+{"name":"WiFi Canary","version":"1.2.0-dev","new_install_prompt_erase":false,"builds":[{"chipFamily":"ESP32","parts":[{"path":"../firmware/esp32dev/bootloader.bin","offset":4096},{"path":"../firmware/esp32dev/partitions.bin","offset":32768},{"path":"../firmware/esp32dev/firmware.bin","offset":65536}]}]}
