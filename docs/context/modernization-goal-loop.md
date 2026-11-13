@@ -20,7 +20,7 @@ Reviewer 1, behavior and scope. Independently inspect the commit diff and origin
 
 Reviewer 2, hardware and build. Check the board/profile mapping, pins, library declarations, partition offsets, manifest chip family, binary paths, and hardware claims against source documents. Mark source-only findings separately from physical checks.
 
-Reviewer 3, browser and privacy. Check the install/config flow, Web Serial parsing, bounded memory, safe DOM rendering, local-only data handling, recovery behavior, and release artifact integrity. Verify configuration is included in the selected flash operation. Check for sensitive fixture data.
+Reviewer 3, browser and privacy. Check the install/config flow, Web Serial parsing, bounded line and event memory, safe DOM rendering, local-only data handling, recovery behavior, and release artifact integrity. Verify configuration is included in the selected flash operation. Check whether the installer dependency is pinned or bundled and whether the page's network requirement is accurate. Check for sensitive fixture data.
 
 Reviewer 4, verification and support. Re-run or inspect applicable tests and board builds. Check release assembly, README, hardware matrix, quick start, troubleshooting, and status labels. Confirm each claim has evidence. Every reviewer examines every commit. For an irrelevant lens, record "no finding" with the reason instead of skipping the review.
 

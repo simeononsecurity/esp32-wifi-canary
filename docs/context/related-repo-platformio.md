@@ -38,4 +38,6 @@ WiFi Canary's productization table places the factory app at `0x10000`, configur
 
 The browser currently downloads a 34-byte config image but does not include that image in the install manifest (`web/app.js:57-71`). Eye Spy's configurator demonstrates a client-side manifest with an additional config part (`eye-spy/docs/index.html:725-755`). Verify the Canary flash offset, config schema, generated binary paths, and browser behavior together. Keep defaults when no custom config is selected.
 
+The current page loads ESP Web Tools from `https://unpkg.com/esp-web-tools@10` (`web/index.html:6-9`). Local event handling does not make the page self-contained. Decide whether a release bundles a pinned installer asset or documents the CDN requirement, then test the chosen packaging and content security policy. The Web Serial reader retains an unterminated line without a size limit (`web/app.js:38-48`). Set a bounded line size and show a parse error before treating the console as resilient to malformed device output.
+
 The C5 custom board JSON declares 16 MB flash, while Canary currently selects `partitions_4mb.csv` (`boards/lilygo-t-dongle-c5.json`, `platformio.ini:124-140`). Eye Spy and Flock You also use C5-specific toolchains, but their partition choices and dual-band claims differ. Do not infer 5 GHz support or full-flash use from a successful build.
