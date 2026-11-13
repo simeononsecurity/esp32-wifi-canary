@@ -38,6 +38,14 @@ Review fix after `3668d40`, 2026-11-13:
 - Release assembly validated staged images for all eight profiles. All 93 release files passed `shasum -a 256 -c SHA256SUMS`.
 - Firmware source has not changed since the previous eight successful board builds. Stage source digests and images matched current firmware sources during release assembly. Physical boot and USB serial checks still need owner-authorized device flashing.
 
+Review of `4d93e6e` (parent `3668d40`): Reviewer 1 found no original-behavior or radio-scope issue. Reviewer 2 found no device, build, partition, or manifest issue. Reviewers 3 and 4 independently found that a fabricated 24-byte image passed the release validator. This finding is addressed in the next change.
+
+Release validation follow-up, 2026-11-13:
+
+- Image validation now reads every Espressif segment, rejects truncated segments and nonzero checksum padding, verifies the XOR checksum, and verifies the appended SHA256 digest. It still checks ESP32 versus ESP32-C5 chip IDs.
+- Synthetic tests reject 24-byte, truncated, and corrupted images. `python3.14 -m unittest discover -s tools -p 'test_*.py'` passed, 12 of 12. `node web/test.mjs` passed. `git diff --check` passed.
+- Release assembly again validated all eight staged profiles. `shasum -a 256 -c SHA256SUMS` passed for 93 files. Firmware source did not change, so the eight previously successful board builds remain applicable. No physical device was flashed or tested.
+
 
 ## 2026-10-14
 

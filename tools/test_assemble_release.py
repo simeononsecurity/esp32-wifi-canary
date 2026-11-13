@@ -1,3 +1,4 @@
+import hashlib
 import struct
 import tempfile
 import unittest
@@ -7,13 +8,28 @@ from assemble_release import PARTITIONS, validate_image_target, validate_partiti
 
 
 class ReleaseValidationTests(unittest.TestCase):
+    @staticmethod
+    def image(chip_id):
+        header = bytearray(24)
+        header[0] = 0xE9
+        header[1] = 1
+        header[23] = 1
+        struct.pack_into("<H", header, 12, chip_id)
+        segment = struct.pack("<II", 0x40080000, 4) + b"DATA"
+        body = header + segment
+        checksum = 0xEF
+        for byte in b"DATA":
+            checksum ^= byte
+        body.extend(b"\0" * (15 - len(body) % 16))
+        body.append(checksum)
+        body.extend(hashlib.sha256(body).digest())
+        return body
+
     def test_wrong_chip_rejected_for_bootloader_and_application(self):
         for board, expected in (("atom-lite", 0), ("lilygo-t-dongle-c5", 23)):
             for name in ("bootloader.bin", "firmware.bin"):
                 with self.subTest(board=board, name=name), tempfile.TemporaryDirectory() as directory:
-                    image = bytearray(24)
-                    image[0] = 0xE9
-                    struct.pack_into("<H", image, 12, expected)
+                    image = self.image(expected)
                     path = Path(directory) / name
                     path.write_bytes(image)
                     validate_image_target(path, expected)
@@ -21,6 +37,17 @@ class ReleaseValidationTests(unittest.TestCase):
                     path.write_bytes(image)
                     with self.assertRaisesRegex(ValueError, "image chip ID"):
                         validate_image_target(path, expected)
+
+    def test_truncated_and_corrupt_images_rejected(self):
+        image = self.image(0)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "firmware.bin"
+            for invalid in (image[:24], image[:-1], image[:-33],
+                            image[:32] + b"X" + image[33:]):
+                with self.subTest(length=len(invalid), corrupted=invalid[-1:]):
+                    path.write_bytes(invalid)
+                    with self.assertRaisesRegex(ValueError, "image"):
+                        validate_image_target(path, 0)
 
     def test_wrong_custom_partition_subtypes_rejected(self):
         fixture = bytearray()

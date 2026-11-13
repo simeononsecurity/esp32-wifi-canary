@@ -57,6 +57,28 @@ def validate_image_target(path, expected_chip):
     chip_id = struct.unpack_from("<H", image, 12)[0]
     if chip_id != expected_chip:
         raise ValueError(f"{path}: image chip ID {chip_id} differs from {expected_chip}")
+    segments = image[1]
+    if not 1 <= segments <= 16 or image[23] != 1:
+        raise ValueError(f"{path}: invalid image segment count or missing SHA256 digest")
+    position = 24
+    checksum = 0xEF
+    for _ in range(segments):
+        if position + 8 > len(image):
+            raise ValueError(f"{path}: truncated image segment header")
+        _address, size = struct.unpack_from("<II", image, position)
+        position += 8
+        if size > len(image) - position:
+            raise ValueError(f"{path}: truncated image segment")
+        for byte in image[position:position + size]:
+            checksum ^= byte
+        position += size
+    checksum_position = (position // 16 + 1) * 16 - 1
+    if len(image) != checksum_position + 33 or any(image[position:checksum_position]):
+        raise ValueError(f"{path}: invalid image length or checksum padding")
+    if image[checksum_position] != checksum:
+        raise ValueError(f"{path}: invalid image checksum")
+    if hashlib.sha256(image[:checksum_position + 1]).digest() != image[checksum_position + 1:]:
+        raise ValueError(f"{path}: invalid image SHA256 digest")
 
 
 def firmware_sources():
