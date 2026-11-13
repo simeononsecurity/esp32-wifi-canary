@@ -197,7 +197,7 @@ threat disappears without needing a reboot.
 
 No external components required.
 
-Seven more profiles share the same detection core. See `docs/hardware-matrix.md` for build status and `docs/context/target-devices-and-pins.md` for pins, libraries, and target order. The sibling-repository PlatformIO comparison and modernization agent prompt are in `docs/context/`. These profiles have build verification only. No live hardware result is claimed in this branch.
+Seven more profiles share the same detection core. See `docs/hardware-matrix.md` for build status and `docs/context/target-devices-and-pins.md` for pins, libraries, and target order. The sibling-repository PlatformIO comparison is in `docs/context/`. These profiles have build verification only. No live hardware result is claimed in this branch.
 
 ---
 
