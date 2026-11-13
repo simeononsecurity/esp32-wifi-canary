@@ -30,6 +30,14 @@ Follow-up verification on 2026-11-13:
 - Release assembly validated all eight source fingerprints and image layouts. `shasum -a 256 -c SHA256SUMS` passed for 92 files, including the browser page, manifests, bundled installer, and firmware images.
 - Live boot confirmation still needs a device reset observed over USB. Saved boot records are labeled as history. No physical check occurred.
 
+Review fix after `3668d40`, 2026-11-13:
+
+- Release assembly now rejects bootloader or application images with an ESP32 versus ESP32-C5 chip ID mismatch. It checks every partition's type, subtype, offset, and size, including custom configuration subtype `0x40` and log subtype `0x41`.
+- The browser's boot state is tested across saved replay, live boot, board selection changes, disconnect, and reconnect. A board change or serial disconnect clears the displayed confirmation.
+- `node web/test.mjs` passed. Python tests passed, 11 of 11, including synthetic wrong-chip and wrong-subtype rejection. Native Unity tests passed, 18 of 18. `git diff --check` passed.
+- Release assembly validated staged images for all eight profiles. All 93 release files passed `shasum -a 256 -c SHA256SUMS`.
+- Firmware source has not changed since the previous eight successful board builds. Stage source digests and images matched current firmware sources during release assembly. Physical boot and USB serial checks still need owner-authorized device flashing.
+
 
 ## 2026-10-14
 

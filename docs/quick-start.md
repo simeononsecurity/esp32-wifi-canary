@@ -7,7 +7,7 @@
 3. Select the exact board.
 4. Set sensitivity and baseline scans. RGB boards also show brightness. Basic, Core2, and StickC show a display alert timer. Standard values match the original behavior.
 5. Wait for the ready message, then connect the board over USB and start Install. The page checks the selected board's three firmware files and includes its 34-byte configuration in the flash.
-6. Connect serial at 115200 baud. The console requests saved events, then asks you to press the device reset button. Confirm a new live boot event reports the selected board. Inspect state, score, baseline progress, detector meaning, and health. Export JSON or CSV locally. A readable `[canary] config=stored` line appears after reset.
+6. Connect serial at 115200 baud. The console requests saved events, then asks you to press the device reset button. Confirm a new live boot event reports the selected board. Changing the selected board or disconnecting serial clears boot confirmation. Inspect state, score, baseline progress, detector meaning, and health. Export JSON or CSV locally. A readable `[canary] config=stored` line appears after reset.
 
 The page works offline when served from the assembled release. Use a Chromium browser with Web Serial support. Browser flashing and physical boot still require checks on each device.
 

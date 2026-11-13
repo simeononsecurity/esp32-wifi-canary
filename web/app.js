@@ -3,8 +3,10 @@ import { buildConfig } from "./config.js";
 import { buildInstallManifest } from "./install-manifest.js";
 import { createSerialLines } from "./serial-lines.js";
 import { explainDetector } from "./detectors.js";
+import { createBootState } from "./boot-state.js";
 
 const events = [];
+const bootState = createBootState();
 const byId = id => document.getElementById(id);
 let port;
 let reader;
@@ -125,23 +127,18 @@ async function connect() {
     byId("connect").disabled = true;
     byId("disconnect").disabled = false;
     safeText(byId("connection"), "Connected. Reading saved events.");
-    safeText(byId("boot-status"), "Saved events are history. Reset the device after replay to confirm this boot.");
-    let replaying = true;
+    safeText(byId("boot-status"), bootState.connect(byId("board-select").value));
     const serialLines = createSerialLines(line => {
       if (line === "[canary] replay complete") {
-        replaying = false;
-        safeText(byId("boot-status"), "Saved events loaded. Press the device reset button to confirm a live boot.");
+        safeText(byId("boot-status"), bootState.replayComplete());
         return;
       }
       try {
         const event = parseCanaryLine(line);
         if (event) {
           render(event);
-          if (event.event === "boot" && !replaying) {
-            const matches = event.board === byId("board-select").value;
-            safeText(byId("boot-status"), matches ? `Boot confirmed: ${event.board}, firmware ${event.firmware}` :
-              `Board mismatch: selected ${byId("board-select").value}, device reports ${event.board}`);
-          }
+          const bootStatus = bootState.event(event);
+          if (bootStatus) safeText(byId("boot-status"), bootStatus);
         }
       } catch (error) { safeText(byId("parser-error"), error.message); }
     }, message => safeText(byId("parser-error"), message));
@@ -161,6 +158,7 @@ async function connect() {
     byId("connect").disabled = false;
     byId("disconnect").disabled = true;
     safeText(byId("connection"), "Disconnected");
+    safeText(byId("boot-status"), bootState.disconnect());
   }
 }
 
@@ -168,7 +166,10 @@ async function disconnect() {
   if (reader) await reader.cancel();
 }
 
-byId("board-select").addEventListener("change", refreshInstall);
+byId("board-select").addEventListener("change", () => {
+  safeText(byId("boot-status"), bootState.boardChanged(byId("board-select").value));
+  refreshInstall();
+});
 for (const id of ["sensitivity", "baseline-scans", "brightness", "alert-hold"])
   byId(id).addEventListener("input", refreshInstall);
 byId("connect").addEventListener("click", () => connect().catch(error => safeText(byId("connection"), error.message)));

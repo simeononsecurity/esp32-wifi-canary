@@ -20,9 +20,13 @@ CONFIG_OFFSET = 0x290000
 OFFSETS = (0x8000, 0x10000, CONFIG_OFFSET)
 NAMES = ("bootloader.bin", "partitions.bin", "firmware.bin")
 PARTITIONS = {
-    "app0": (0x10000, 0x280000),
-    "canarycfg": (CONFIG_OFFSET, 0x1000),
-    "canarylog": (0x291000, 0x5F000),
+    "nvs": (1, 2, 0x9000, 0x5000),
+    "otadata": (1, 0, 0xE000, 0x2000),
+    "app0": (0, 0, 0x10000, 0x280000),
+    "canarycfg": (1, 0x40, CONFIG_OFFSET, 0x1000),
+    "canarylog": (1, 0x41, 0x291000, 0x5F000),
+    "coredump": (1, 3, 0x2F0000, 0x10000),
+    "spiffs": (1, 0x82, 0x300000, 0x100000),
 }
 
 
@@ -30,15 +34,29 @@ def validate_partition_table(path):
     data = path.read_bytes()
     entries = {}
     for position in range(0, len(data) - 31, 32):
-        magic, _type, _subtype, offset, size, label, _flags = struct.unpack_from(
+        magic, partition_type, subtype, offset, size, label, _flags = struct.unpack_from(
             "<HBBII16sI", data, position
         )
         if magic != 0x50AA:
             break
-        entries[label.split(b"\0", 1)[0].decode("ascii")] = (offset, size)
+        name = label.split(b"\0", 1)[0].decode("ascii")
+        if name in entries:
+            raise ValueError(f"{path}: duplicate partition {name}")
+        entries[name] = (partition_type, subtype, offset, size)
+    if len(entries) != len(PARTITIONS):
+        raise ValueError(f"{path}: unexpected partition count")
     for name, expected in PARTITIONS.items():
         if entries.get(name) != expected:
             raise ValueError(f"{path}: {name} partition does not match {expected}")
+
+
+def validate_image_target(path, expected_chip):
+    image = path.read_bytes()
+    if len(image) < 24 or image[0] != 0xE9:
+        raise ValueError(f"{path}: invalid Espressif image header")
+    chip_id = struct.unpack_from("<H", image, 12)[0]
+    if chip_id != expected_chip:
+        raise ValueError(f"{path}: image chip ID {chip_id} differs from {expected_chip}")
 
 
 def firmware_sources():
@@ -85,6 +103,8 @@ def validate_board(board, directory):
         if size == 0 or size > OFFSETS[index] - offset:
             raise ValueError(f"{board}: {name} size {size} crosses next partition")
         results.append((source, name, hashlib.sha256(source.read_bytes()).hexdigest()))
+        if name in ("bootloader.bin", "firmware.bin"):
+            validate_image_target(source, 23 if c5 else 0)
         if name == "partitions.bin":
             validate_partition_table(source)
     return results
