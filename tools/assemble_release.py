@@ -41,6 +41,20 @@ def validate_partition_table(path):
             raise ValueError(f"{path}: {name} partition does not match {expected}")
 
 
+def firmware_sources():
+    return sorted((ROOT / "boards").glob("*.json")) + sorted(ROOT.glob("canary_*.h")) + [
+        ROOT / "main.cpp", ROOT / "platformio.ini", ROOT / "partitions_4mb.csv"
+    ]
+
+
+def source_digest():
+    digest = hashlib.sha256()
+    for path in firmware_sources():
+        digest.update(str(path.relative_to(ROOT)).encode("utf-8") + b"\0")
+        digest.update(path.read_bytes())
+    return digest.hexdigest()
+
+
 def validate_board(board, directory):
     manifest = json.loads((ROOT / "web" / "manifests" / f"{board}.json").read_text())
     firmware_version = re.search(r'kFirmwareVersion\s*=\s*"([^"]+)"',
@@ -80,10 +94,18 @@ def stage_board(board):
     if board not in BOARDS:
         raise ValueError(f"unknown board: {board}")
     images = validate_board(board, ROOT / ".pio" / "build")
+    newest_source = max(path.stat().st_mtime_ns for path in firmware_sources())
+    firmware = ROOT / ".pio" / "build" / board / "firmware.bin"
+    if firmware.stat().st_mtime_ns < newest_source:
+        raise ValueError(f"{board}: firmware image predates current source")
     destination = STAGING / board
     destination.mkdir(parents=True, exist_ok=True)
     for source, name, _ in images:
         shutil.copy2(source, destination / name)
+    (destination / "source.json").write_text(json.dumps({
+        "source_sha256": source_digest(),
+        "images": {name: digest for _, name, digest in images},
+    }, sort_keys=True) + "\n")
     print(f"{board}: validated and staged input")
 
 
@@ -94,22 +116,34 @@ def main():
     if args.stage:
         stage_board(args.stage)
         return
-    validated = {board: validate_board(board, STAGING) for board in BOARDS}
+    validated = {}
+    current_source = source_digest()
+    for board in BOARDS:
+        images = validate_board(board, STAGING)
+        metadata = json.loads((STAGING / board / "source.json").read_text())
+        if metadata.get("source_sha256") != current_source or metadata.get("images") != {
+            name: digest for _, name, digest in images
+        }:
+            raise ValueError(f"{board}: staged image does not match current source")
+        validated[board] = images
     if RELEASE.exists():
         shutil.rmtree(RELEASE)
     shutil.copytree(ROOT / "web", RELEASE / "web", ignore=shutil.ignore_patterns("firmware"))
-    checksums = []
     for board, images in validated.items():
         for source, name, digest in images:
             for destination in (RELEASE / "firmware" / board / name,
                                 RELEASE / "web" / "firmware" / board / name):
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(source, destination)
-                checksums.append(f"{digest}  {destination.relative_to(RELEASE)}")
+    checksums = []
+    for path in sorted(RELEASE.rglob("*")):
+        if path.is_file():
+            checksums.append(f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.relative_to(RELEASE)}")
     (RELEASE / "SHA256SUMS").write_text("\n".join(checksums) + "\n")
     for board in BOARDS:
         print(f"{board}: validated and staged")
     print(f"release: {RELEASE}")
+    print(f"checksums: {len(checksums)} files")
 
 
 if __name__ == "__main__":

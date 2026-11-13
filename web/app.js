@@ -10,6 +10,7 @@ let port;
 let reader;
 let installUrls = [];
 let installRevision = 0;
+const MAX_INSTALL_MANIFESTS = 128;
 
 function configValues() {
   const fields = ["baseline-scans", "brightness", "alert-hold"];
@@ -38,6 +39,10 @@ async function refreshInstall() {
   installer.removeAttribute("manifest");
   updateBoardControls();
   safeText(byId("install-status"), "Preparing firmware and settings");
+  if (installUrls.length >= MAX_INSTALL_MANIFESTS * 2) {
+    safeText(byId("install-status"), "Too many setting changes. Reload this page to prepare another install.");
+    return;
+  }
   let urls = [];
   try {
     const board = byId("board-select").value;
@@ -65,8 +70,7 @@ async function refreshInstall() {
     installer.setAttribute("manifest", manifestObjectUrl);
     installer.hidden = false;
     safeText(byId("install-status"), `Ready: ${byId("board-select").selectedOptions[0].text}. Firmware and settings flash together.`);
-    for (const url of installUrls) URL.revokeObjectURL(url);
-    installUrls = urls;
+    installUrls.push(...urls);
     urls = [];
   } catch (error) {
     if (revision === installRevision) safeText(byId("install-status"), error.message);
@@ -120,13 +124,20 @@ async function connect() {
     await port.open({ baudRate: 115200 });
     byId("connect").disabled = true;
     byId("disconnect").disabled = false;
-    safeText(byId("connection"), "Connected. Reading saved boot event.");
+    safeText(byId("connection"), "Connected. Reading saved events.");
+    safeText(byId("boot-status"), "Saved events are history. Reset the device after replay to confirm this boot.");
+    let replaying = true;
     const serialLines = createSerialLines(line => {
+      if (line === "[canary] replay complete") {
+        replaying = false;
+        safeText(byId("boot-status"), "Saved events loaded. Press the device reset button to confirm a live boot.");
+        return;
+      }
       try {
         const event = parseCanaryLine(line);
         if (event) {
           render(event);
-          if (event.event === "boot") {
+          if (event.event === "boot" && !replaying) {
             const matches = event.board === byId("board-select").value;
             safeText(byId("boot-status"), matches ? `Boot confirmed: ${event.board}, firmware ${event.firmware}` :
               `Board mismatch: selected ${byId("board-select").value}, device reports ${event.board}`);
@@ -168,5 +179,9 @@ byId("config-export").addEventListener("click", () => {
   try {
     download("canary-config.bin", buildConfig(configValues()), "application/octet-stream");
   } catch (error) { safeText(byId("install-status"), error.message); }
+});
+window.addEventListener("pagehide", () => {
+  for (const url of installUrls) URL.revokeObjectURL(url);
+  installUrls = [];
 });
 refreshInstall();

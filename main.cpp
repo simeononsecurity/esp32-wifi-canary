@@ -844,7 +844,7 @@ static bool g_radio2gReady = true;
 
 static void performScan(bool isBaseline) {
     if (!g_radio2gReady) {
-        Serial.println("[canary] 2.4 GHz radio setup failed; scan skipped");
+        g_lastScan = millis();
         return;
     }
     const unsigned long scanStarted = millis();
@@ -972,7 +972,10 @@ static void handleSerialCommands() {
         if (value == '\r') continue;
         if (value == '\n') {
             command[used] = '\0';
-            if (!strcmp(command, "dumplog")) g_eventLog.dump(Serial);
+            if (!strcmp(command, "dumplog")) {
+                g_eventLog.dump(Serial);
+                Serial.println("[canary] replay complete");
+            }
             else if (!strcmp(command, "clearlog"))
                 Serial.println(g_eventLog.clear() ? "[canary] log cleared" : "[canary] log clear failed");
             used = 0;

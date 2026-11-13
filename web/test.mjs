@@ -15,6 +15,8 @@ assert.throws(() => parseCanaryLine(valid.replace('"health":{}', '"health":null'
 assert.match(eventsToCsv([parseCanaryLine(valid)]), /device_id/);
 assert.match(eventsToCsv([{reason:"=SUM(1,1)"}]), /'\=SUM/);
 assert.match(eventsToCsv([{reason:"  =SUM(1,1)"}]), /'  =SUM/);
+assert.match(eventsToCsv([{score_delta:-1,rssi:-48}]), /"-1"/);
+assert.doesNotMatch(eventsToCsv([{score_delta:-1,rssi:-48}]), /"'-1"/);
 assert.match(explainDetector("open_clone"), /encrypted SSID/);
 const config = buildConfig();
 assert.equal(config.length, 34);

@@ -20,6 +20,16 @@ Verification for the review fix on 2026-11-13:
 - A rendered localhost check of the assembled page showed separate Echo and Voice choices, matching ready states, installer manifest refresh after setting changes, invalid-value install blocking, and no horizontal overflow at 473 pixels. The final console health panel rendered with no browser errors.
 - No physical device was attached, flashed, booted, or used to confirm radio, LED, audio, display, haptic, button, or Web Serial behavior. C5 stays experimental. A WiFi Canary software license still needs the owner’s decision.
 
+Review findings for commit `1152ee6` are in the task report, keyed to parent `5cb6e4d`. The follow-up fix separates saved and live boot events, keeps active flash Blob URLs alive, corrects negative numeric CSV export, checks stage freshness against current firmware source, and covers all release files with checksums. It also prevents repeated C5 scan-error output when the 2.4 GHz band lock fails.
+
+Follow-up verification on 2026-11-13:
+
+- `node web/test.mjs` passed. Python parser and monitor tests passed, 9 of 9. Native Unity tests passed, 18 of 18.
+- A deliberate staging attempt with an older Atom Lite image failed with `firmware image predates current source`.
+- Atom Lite, ESP32 DevKit, Atom Echo, Atom Voice, M5Stack Basic, Core2 for AWS, and M5StickC Plus SE builds passed. The isolated C5 build passed as experimental.
+- Release assembly validated all eight source fingerprints and image layouts. `shasum -a 256 -c SHA256SUMS` passed for 92 files, including the browser page, manifests, bundled installer, and firmware images.
+- Live boot confirmation still needs a device reset observed over USB. Saved boot records are labeled as history. No physical check occurred.
+
 
 ## 2026-10-14
 
