@@ -11,6 +11,19 @@ export function crc32(bytes) {
 }
 
 export function buildConfig(values = {}) {
+  const fields = {
+    engineMask: [0, 0x1ff, 0x1ff],
+    sensitivity: [0, 2, 1],
+    baselineScans: [1, 12, 3],
+    ledBrightness: [0, 255, 120],
+    alertHoldSeconds: [3, 120, 15],
+    outputFlags: [0, 15, 15]
+  };
+  for (const [name, [min, max]] of Object.entries(fields)) {
+    const value = values[name] ?? fields[name][2];
+    if (!Number.isInteger(value) || value < min || value > max)
+      throw new RangeError(`Invalid ${name}`);
+  }
   const bytes = new Uint8Array(SIZE);
   const view = new DataView(bytes.buffer);
   view.setUint32(0, MAGIC, true);

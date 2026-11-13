@@ -1,5 +1,14 @@
 # Productization progress
 
+## 2026-11-12, local implementation loop
+
+- Compared `codex/wifi-canary-productization` with `main` and copied main's `AGENTS.md` into this worktree, updating its board flag to match the current profile.
+- The selected board's browser manifest now includes a validated 34-byte configuration image at `0x290000`. Firmware paths resolve against the source manifest before the browser creates a Blob manifest. A standard install writes standard settings, so an earlier custom setting does not survive a reinstall.
+- The browser blocks installation for missing or mismatched manifests and invalid settings. It keeps Atom Echo and Atom Voice as separate manifest choices.
+- Focused checks: `node web/test.mjs` passed, including all eight manifest and config offset cases. PlatformIO native tests passed, 18 of 18. `atom-lite` and `esp32dev` builds passed using PlatformIO 6.2.0 in a temporary Python 3.14 environment. No device was flashed or checked physically.
+- The installed Homebrew PlatformIO uses unsupported Python 3.15 and lacked `intelhex`; verification used `/private/tmp/canary-pio-venv` with Python 3.14 and `intelhex`.
+
+
 ## 2026-10-14
 
 Phases 0 through 3 are implemented on branch `codex/wifi-canary-productization` from commit `2d7a5bb`.

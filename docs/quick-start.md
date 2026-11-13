@@ -5,9 +5,9 @@
 1. Serve `web/` from HTTPS or localhost.
 2. Open the page in a Chromium browser.
 3. Select the exact board.
-4. Connect the board over USB.
-5. Start Install.
-6. Open the local dashboard at 115200 baud.
+4. Set optional sensitivity, baseline, brightness, and alert hold values. Standard values match the original behavior.
+5. Wait for the ready message, then connect the board over USB and start Install. The selected board's firmware and 34-byte configuration flash together.
+6. Connect serial at 115200 baud. Confirm the boot event shows the selected board and the readable `[canary] config=stored` line appears. View local events in the dashboard.
 
 The install button needs release binaries under `web/firmware/<board>/`. CI assembles this directory in the release artifact.
 
