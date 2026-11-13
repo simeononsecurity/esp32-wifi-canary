@@ -2,6 +2,8 @@
 
 No listed board has a recorded live-device check in this branch. Each status below means source compilation only.
 
+On 2026-11-13, all eight profiles compiled after the event-schema and 2.4 GHz C5 band-lock changes. Atom Echo and Atom Voice passed as separate builds. Neither product has a physical boot, light, button, speaker, or browser-flash result.
+
 | PlatformIO environment | Chip | Light | Display | Audio | Haptic | Button | Status |
 |---|---|---:|---:|---:|---:|---:|---|
 | atom-lite | ESP32 | RGB | No | No | No | Yes | Build verified |

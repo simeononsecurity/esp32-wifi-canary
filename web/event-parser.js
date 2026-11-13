@@ -8,12 +8,18 @@ export function parseCanaryLine(line) {
   if (value.schema !== SUPPORTED_SCHEMA) throw new Error(`Unsupported schema ${value.schema}`);
   for (const key of ["device_id", "firmware", "board", "uptime_ms", "event", "score", "state", "health"])
     if (!(key in value)) throw new Error(`Missing field ${key}`);
+  if (!value.health || typeof value.health !== "object" || Array.isArray(value.health))
+    throw new Error("Invalid health field");
   return value;
 }
 
 export function eventsToCsv(events) {
   const fields = ["device_id", "firmware", "board", "uptime_ms", "event", "detector", "score_delta", "score", "state", "reason", "ssid", "bssid", "channel", "rssi"];
-  const quote = value => `"${String(value ?? "").replaceAll('"', '""')}"`;
+  const quote = value => {
+    let text = String(value ?? "");
+    if (/^\s*[=+\-@]/.test(text)) text = `'${text}`;
+    return `"${text.replaceAll('"', '""')}"`;
+  };
   return [fields.join(","), ...events.map(event => fields.map(field => quote(event[field])).join(","))].join("\n");
 }
 

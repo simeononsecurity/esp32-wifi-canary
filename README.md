@@ -232,7 +232,7 @@ DevKit build uses GPIO 2 (onboard LED, binary on/off). All detection logic is id
 
 ### Browser installer and dashboard
 
-Serve `web/` from HTTPS or localhost. The page selects board-specific manifests, installs release firmware, generates a CRC-protected config image, reads Web Serial events, and exports JSON or CSV. See `docs/quick-start.md`.
+Build and stage all eight targets with `tools/assemble_release.py`, then serve `release/web/` from HTTPS or localhost. The assembled page includes a pinned local ESP Web Tools installer, checks selected firmware files, flashes a CRC-protected configuration with the firmware, reads Web Serial events, and exports JSON or CSV. See `docs/quick-start.md`.
 
 ### Multi-unit monitoring
 

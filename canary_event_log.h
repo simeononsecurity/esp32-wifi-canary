@@ -8,7 +8,7 @@
 namespace canary {
 
 constexpr uint32_t kLogMagic = 0x474F4C43UL;
-constexpr size_t kLogRecordSize = 512;
+constexpr size_t kLogRecordSize = 1024;
 
 #pragma pack(push, 1)
 struct LogRecord {
@@ -16,7 +16,7 @@ struct LogRecord {
     uint32_t sequence;
     uint16_t length;
     uint16_t version;
-    char json[496];
+    char json[1008];
     uint32_t crc32;
 };
 #pragma pack(pop)
@@ -46,6 +46,7 @@ public:
 
     bool append(const char* json) {
         if (!partition_ || !json) return false;
+        if (strlen(json) >= sizeof(LogRecord::json)) { ++losses_; return false; }
         if (nextSlot_ >= slots_) {
             if (esp_partition_erase_range(partition_, 0, partition_->size) != ESP_OK) return false;
             losses_ += slots_;
@@ -56,7 +57,7 @@ public:
         record.magic = kLogMagic;
         record.sequence = nextSequence_++;
         record.version = 1;
-        const size_t length = strnlen(json, sizeof(record.json) - 1);
+        const size_t length = strlen(json);
         record.length = static_cast<uint16_t>(length);
         memcpy(record.json, json, length);
         record.json[length] = '\0';

@@ -94,11 +94,25 @@ inline void boardSetRgb(uint8_t red, uint8_t green, uint8_t blue) {
 }
 
 inline void boardApplyStateLight(CanaryState state) {
+    static unsigned long lastUpdate = 0;
+    const unsigned long now = millis();
+    if (now - lastUpdate < 80) return;
+    lastUpdate = now;
     switch (state) {
-        case STATE_STARTUP: boardSetRgb(0, 0, 60); break;
+        case STATE_STARTUP: {
+            const unsigned long phase = now % 2000;
+            const unsigned long triangle = phase < 1000 ? phase : 2000 - phase;
+            boardSetRgb(0, 0, static_cast<uint8_t>(15 + 45 * triangle / 1000));
+            break;
+        }
         case STATE_NORMAL: boardSetRgb(0, 40, 0); break;
-        case STATE_CAUTION: boardSetRgb(80, 35, 0); break;
-        case STATE_ALERT: boardSetRgb(110, 0, 0); break;
+        case STATE_CAUTION: boardSetRgb(70, 35, 0); break;
+        case STATE_ALERT: {
+            const unsigned long phase = now % 800;
+            const unsigned long triangle = phase < 400 ? phase : 800 - phase;
+            boardSetRgb(static_cast<uint8_t>(38 + 72 * triangle / 400), 0, 0);
+            break;
+        }
     }
 }
 

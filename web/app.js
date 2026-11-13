@@ -1,10 +1,13 @@
 import { parseCanaryLine, eventsToCsv, safeText } from "./event-parser.js";
 import { buildConfig } from "./config.js";
 import { buildInstallManifest } from "./install-manifest.js";
+import { createSerialLines } from "./serial-lines.js";
+import { explainDetector } from "./detectors.js";
 
 const events = [];
 const byId = id => document.getElementById(id);
 let port;
+let reader;
 let installUrls = [];
 let installRevision = 0;
 
@@ -22,11 +25,18 @@ function configValues() {
   };
 }
 
+function updateBoardControls() {
+  const board = byId("board-select").value;
+  byId("brightness-field").hidden = !["atom-lite", "atom-echo", "atom-voice", "lilygo-t-dongle-c5"].includes(board);
+  byId("alert-hold-field").hidden = !["m5stack-basic", "m5stack-core2-aws", "m5stickc-plus-se"].includes(board);
+}
+
 async function refreshInstall() {
   const revision = ++installRevision;
   const installer = byId("installer");
   installer.hidden = true;
   installer.removeAttribute("manifest");
+  updateBoardControls();
   safeText(byId("install-status"), "Preparing firmware and settings");
   let urls = [];
   try {
@@ -40,6 +50,16 @@ async function refreshInstall() {
     const configUrl = URL.createObjectURL(new Blob([config], { type: "application/octet-stream" }));
     urls.push(configUrl);
     const manifest = buildInstallManifest(base, manifestUrl.href, board, configUrl);
+    for (let index = 0; index < 3; index++) {
+      const part = manifest.builds[0].parts[index];
+      const result = await fetch(part.path);
+      if (!result.ok) throw new Error(`Firmware unavailable: ${part.path.split("/").pop()} (${result.status})`);
+      const bytes = await result.arrayBuffer();
+      const nextOffset = manifest.builds[0].parts[index + 1].offset;
+      if (!bytes.byteLength || bytes.byteLength > nextOffset - part.offset)
+        throw new Error(`Firmware size is invalid: ${part.path.split("/").pop()}`);
+      if (revision !== installRevision) return;
+    }
     const manifestObjectUrl = URL.createObjectURL(new Blob([JSON.stringify(manifest)], { type: "application/json" }));
     urls.push(manifestObjectUrl);
     installer.setAttribute("manifest", manifestObjectUrl);
@@ -70,6 +90,18 @@ function render(event) {
   for (const field of ["device_id", "board", "state", "score", "reason", "ssid", "bssid", "channel", "rssi"])
     safeText(byId(field), event[field]);
   safeText(byId("drops"), (event.health.deauth_queue_drops || 0) + (event.health.pwnagotchi_queue_drops || 0));
+  safeText(byId("detector-name"), event.detector || "None");
+  safeText(byId("detector-explanation"), explainDetector(event.detector));
+  const health = event.health;
+  safeText(byId("baseline-progress"), health.baseline_target == null ? "Unknown" :
+    health.baseline_learned ? `Complete (${health.baseline_done}/${health.baseline_target})` :
+    `${health.baseline_done}/${health.baseline_target} scans`);
+  for (const [id, key] of [["aps", "aps"], ["probes", "probes"],
+    ["scan-duration", "scan_duration_ms"], ["capture-gap", "capture_gap_ms"],
+    ["parser-rejects", "parser_rejects"], ["log-losses", "log_losses"],
+    ["free-heap", "free_heap"], ["min-free-heap", "min_free_heap"],
+    ["reset-reason", "reset_reason"], ["channel-frames", "channel_frames"]])
+    safeText(byId(id), health[key]);
   const row = document.createElement("tr");
   for (const field of ["uptime_ms", "device_id", "event", "detector", "score", "reason"] ) {
     const cell = document.createElement("td");
@@ -82,32 +114,54 @@ function render(event) {
 
 async function connect() {
   if (!("serial" in navigator)) throw new Error("Web Serial needs Chromium on HTTPS or localhost");
+  if (port) return;
   port = await navigator.serial.requestPort();
-  await port.open({ baudRate: 115200 });
-  safeText(byId("connection"), "Connected");
-  const decoder = new TextDecoderStream();
-  port.readable.pipeTo(decoder.writable).catch(() => {});
-  const reader = decoder.readable.getReader();
-  let pending = "";
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    pending += value;
-    const lines = pending.split(/\r?\n/);
-    pending = lines.pop();
-    for (const line of lines) {
+  try {
+    await port.open({ baudRate: 115200 });
+    byId("connect").disabled = true;
+    byId("disconnect").disabled = false;
+    safeText(byId("connection"), "Connected. Reading saved boot event.");
+    const serialLines = createSerialLines(line => {
       try {
         const event = parseCanaryLine(line);
-        if (event) render(event);
+        if (event) {
+          render(event);
+          if (event.event === "boot") {
+            const matches = event.board === byId("board-select").value;
+            safeText(byId("boot-status"), matches ? `Boot confirmed: ${event.board}, firmware ${event.firmware}` :
+              `Board mismatch: selected ${byId("board-select").value}, device reports ${event.board}`);
+          }
+        }
       } catch (error) { safeText(byId("parser-error"), error.message); }
+    }, message => safeText(byId("parser-error"), message));
+    reader = port.readable.getReader();
+    const writer = port.writable.getWriter();
+    try { await writer.write(new TextEncoder().encode("dumplog\n")); }
+    finally { writer.releaseLock(); }
+    const decoder = new TextDecoder();
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      serialLines.push(decoder.decode(value, { stream: true }));
     }
+  } finally {
+    if (reader) { reader.releaseLock(); reader = undefined; }
+    if (port) { try { await port.close(); } catch {} port = undefined; }
+    byId("connect").disabled = false;
+    byId("disconnect").disabled = true;
+    safeText(byId("connection"), "Disconnected");
   }
+}
+
+async function disconnect() {
+  if (reader) await reader.cancel();
 }
 
 byId("board-select").addEventListener("change", refreshInstall);
 for (const id of ["sensitivity", "baseline-scans", "brightness", "alert-hold"])
-  byId(id).addEventListener("change", refreshInstall);
+  byId(id).addEventListener("input", refreshInstall);
 byId("connect").addEventListener("click", () => connect().catch(error => safeText(byId("connection"), error.message)));
+byId("disconnect").addEventListener("click", () => disconnect().catch(error => safeText(byId("connection"), error.message)));
 byId("json-export").addEventListener("click", () => download("wifi-canary-events.json", JSON.stringify(events, null, 2), "application/json"));
 byId("csv-export").addEventListener("click", () => download("wifi-canary-events.csv", eventsToCsv(events), "text/csv"));
 byId("config-export").addEventListener("click", () => {

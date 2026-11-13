@@ -2,3 +2,6 @@
 .venv/
 __pycache__/
 idf_component.yml
+release/
+release-input/
+web/firmware/

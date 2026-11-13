@@ -25,6 +25,8 @@ Schema 1 fields are:
 
 Boot and scored detection events also enter the CRC-protected `canarylog` flash ring. The `dumplog` command replays the same JSON objects through this contract.
 
+Health includes `baseline_done`, `baseline_target`, and `baseline_learned`. The firmware emits a `baseline` event after each passive baseline scan. The log record is 1,024 bytes, with room for a complete JSON event and a CRC. Oversized records are rejected instead of truncated.
+
 Adding an optional field does not require a schema increase. Renaming, removing, retyping, or changing the meaning of an existing field requires a schema increase and parser compatibility work. A consumer must reject newer schemas with a visible error instead of dropping records.
 
 `tools/canary_events.py` is the reference host parser. `test/fixtures/events.jsonl` holds compatibility fixtures used in CI.

@@ -2,14 +2,14 @@
 
 ## Browser install
 
-1. Serve `web/` from HTTPS or localhost.
+1. Build each environment and run `python tools/assemble_release.py --stage <environment>` immediately after its build. After all eight, run `python tools/assemble_release.py`. Serve `release/web/` from localhost or HTTPS.
 2. Open the page in a Chromium browser.
 3. Select the exact board.
-4. Set optional sensitivity, baseline, brightness, and alert hold values. Standard values match the original behavior.
-5. Wait for the ready message, then connect the board over USB and start Install. The selected board's firmware and 34-byte configuration flash together.
-6. Connect serial at 115200 baud. Confirm the boot event shows the selected board and the readable `[canary] config=stored` line appears. View local events in the dashboard.
+4. Set sensitivity and baseline scans. RGB boards also show brightness. Basic, Core2, and StickC show a display alert timer. Standard values match the original behavior.
+5. Wait for the ready message, then connect the board over USB and start Install. The page checks the selected board's three firmware files and includes its 34-byte configuration in the flash.
+6. Connect serial at 115200 baud. The console requests saved events. Confirm the boot status shows the selected board, then inspect state, score, baseline progress, detector meaning, and health. Export JSON or CSV locally. A readable `[canary] config=stored` line appears after reset when the console is already connected.
 
-The install button needs release binaries under `web/firmware/<board>/`. CI assembles this directory in the release artifact.
+The page works offline when served from the assembled release. Use a Chromium browser with Web Serial support. Browser flashing and physical boot still require checks on each device.
 
 ## Local build
 

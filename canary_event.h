@@ -26,6 +26,9 @@ struct HealthSnapshot {
     uint32_t minFreeHeap;
     int resetReason;
     uint32_t channelFrames;
+    uint8_t baselineDone;
+    uint8_t baselineTarget;
+    bool baselineLearned;
 };
 
 struct EventRecord {
@@ -157,7 +160,8 @@ inline bool formatEventJson(char* output, size_t capacity, const EventRecord& ev
         "\"deauth_queue_drops\":%lu,\"pwnagotchi_queue_drops\":%lu,"
         "\"scan_duration_ms\":%lu,\"capture_gap_ms\":%lu,\"parser_rejects\":%lu,"
         "\"log_losses\":%lu,\"free_heap\":%lu,\"min_free_heap\":%lu,\"reset_reason\":%d,"
-        "\"channel_frames\":%lu}}",
+        "\"channel_frames\":%lu,\"baseline_done\":%u,\"baseline_target\":%u,"
+        "\"baseline_learned\":%s}}",
         event.health.apCount,
         static_cast<unsigned long>(event.health.probes),
         event.health.channel,
@@ -170,7 +174,9 @@ inline bool formatEventJson(char* output, size_t capacity, const EventRecord& ev
         static_cast<unsigned long>(event.health.freeHeap),
         static_cast<unsigned long>(event.health.minFreeHeap),
         event.health.resetReason,
-        static_cast<unsigned long>(event.health.channelFrames));
+        static_cast<unsigned long>(event.health.channelFrames),
+        event.health.baselineDone, event.health.baselineTarget,
+        event.health.baselineLearned ? "true" : "false");
 }
 
 }  // namespace canary

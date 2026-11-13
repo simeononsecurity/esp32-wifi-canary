@@ -65,22 +65,16 @@ jobs:
         run: python -m pip install platformio
       - name: Build release environments
         run: |
-          mkdir -p release web/firmware
           for env in atom-lite esp32dev atom-echo atom-voice m5stack-basic m5stack-core2-aws m5stickc-plus-se lilygo-t-dongle-c5; do
             if [ "$env" = lilygo-t-dongle-c5 ]; then
               PLATFORMIO_CORE_DIR="$RUNNER_TEMP/pio-c5" pio run -e "$env"
             else
               pio run -e "$env"
             fi
-            mkdir -p "release/$env" "web/firmware/$env"
-            cp .pio/build/$env/firmware.bin release/$env/
-            cp .pio/build/$env/bootloader.bin release/$env/
-            cp .pio/build/$env/partitions.bin release/$env/
-            cp release/$env/*.bin web/firmware/$env/
+            python tools/assemble_release.py --stage "$env"
           done
       - name: Assemble firmware artifact
-        run: |
-          cp -R web release/web
+        run: python tools/assemble_release.py
       - uses: actions/upload-artifact@v4
         with:
           name: wifi-canary-firmware-${{ github.sha }}

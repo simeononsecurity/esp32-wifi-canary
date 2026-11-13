@@ -67,7 +67,7 @@ class PortReader(threading.Thread):
         pending = b""
         while not self.stop.is_set():
             try:
-                descriptor = os.open(self.port, os.O_RDONLY | os.O_NONBLOCK)
+                descriptor = os.open(self.port, os.O_RDONLY | os.O_NONBLOCK | os.O_NOCTTY)
                 try:
                     while not self.stop.is_set():
                         ready, _, _ = select.select([descriptor], [], [], 0.1)

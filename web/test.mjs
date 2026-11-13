@@ -3,13 +3,19 @@ import { parseCanaryLine, eventsToCsv } from "./event-parser.js";
 import { buildConfig, crc32 } from "./config.js";
 import { buildInstallManifest, CONFIG_OFFSET } from "./install-manifest.js";
 import { readFileSync } from "node:fs";
+import { createSerialLines, MAX_SERIAL_LINE } from "./serial-lines.js";
+import { explainDetector } from "./detectors.js";
 
 const valid = JSON.stringify({schema:1,device_id:"abc",firmware:"1",board:"atom-lite",uptime_ms:4,event:"status",score:0,state:"normal",health:{}});
 assert.equal(parseCanaryLine("plain log"), null);
 assert.equal(parseCanaryLine(valid).device_id, "abc");
 assert.throws(() => parseCanaryLine(valid.replace('"schema":1', '"schema":2')), /Unsupported/);
 assert.throws(() => parseCanaryLine('{"schema":1}'), /Missing/);
+assert.throws(() => parseCanaryLine(valid.replace('"health":{}', '"health":null')), /Invalid health/);
 assert.match(eventsToCsv([parseCanaryLine(valid)]), /device_id/);
+assert.match(eventsToCsv([{reason:"=SUM(1,1)"}]), /'\=SUM/);
+assert.match(eventsToCsv([{reason:"  =SUM(1,1)"}]), /'  =SUM/);
+assert.match(explainDetector("open_clone"), /encrypted SSID/);
 const config = buildConfig();
 assert.equal(config.length, 34);
 assert.equal(new DataView(config.buffer).getUint32(30, true), crc32(config.subarray(0, 30)));
@@ -23,4 +29,12 @@ for (const board of ["atom-lite", "esp32dev", "atom-echo", "atom-voice", "m5stac
   assert.equal(manifest.builds[0].parts[3].path, "blob:https://canary.example/config");
   assert.throws(() => buildInstallManifest(base, `https://canary.example/web/manifests/${board}.json`, "other-board", "blob:https://canary.example/config"));
 }
+const lines = [];
+const errors = [];
+const serial = createSerialLines(line => lines.push(line), error => errors.push(error));
+serial.push("first\r\nsec");
+serial.push("ond\n" + "x".repeat(MAX_SERIAL_LINE + 1));
+serial.push("still discarded\nlast\n");
+assert.deepEqual(lines, ["first", "second", "last"]);
+assert.equal(errors.length, 1);
 console.log("web parser and config tests passed");

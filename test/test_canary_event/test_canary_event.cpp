@@ -25,7 +25,7 @@ static EventRecord sampleEvent() {
     event.bssid = "aa:bb:cc:dd:ee:ff";
     event.channel = 6;
     event.rssi = -48;
-    event.health = {19, 42, 6, 2, 1};
+    event.health = {19, 42, 6, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0, 2, 3, false};
     return event;
 }
 
@@ -43,6 +43,9 @@ static void test_event_contains_required_contract_fields() {
     TEST_ASSERT_NOT_NULL(strstr(output, "\"channel\":6"));
     TEST_ASSERT_NOT_NULL(strstr(output, "\"rssi\":-48"));
     TEST_ASSERT_NOT_NULL(strstr(output, "\"deauth_queue_drops\":2"));
+    TEST_ASSERT_NOT_NULL(strstr(output, "\"baseline_done\":2"));
+    TEST_ASSERT_NOT_NULL(strstr(output, "\"baseline_target\":3"));
+    TEST_ASSERT_NOT_NULL(strstr(output, "\"baseline_learned\":false"));
 }
 
 static void test_event_escapes_strings() {

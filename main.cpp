@@ -266,6 +266,9 @@ static void emitEvent(const char* eventType, const char* detectorId,
             g_minFreeHeap == UINT32_MAX ? ESP.getFreeHeap() : g_minFreeHeap,
             static_cast<int>(esp_reset_reason()),
             g_curChannel < 15 ? static_cast<uint32_t>(g_channelFrames[g_curChannel]) : 0,
+            static_cast<uint8_t>(g_baselineScansDone),
+            g_config.baselineScans,
+            g_baselineLearned,
         },
     };
     if (formatEventJson(output, sizeof(output), event)) {
@@ -837,8 +840,13 @@ static void analyzeScanThreats(int scanCount) {
 // ============================================================
 
 static unsigned long g_lastScan = 0;
+static bool g_radio2gReady = true;
 
 static void performScan(bool isBaseline) {
+    if (!g_radio2gReady) {
+        Serial.println("[canary] 2.4 GHz radio setup failed; scan skipped");
+        return;
+    }
     const unsigned long scanStarted = millis();
     promiscStop();
     boardShowScan();
@@ -887,6 +895,8 @@ static void performScan(bool isBaseline) {
         updateSpamTracker(n);
         analyzeScanThreats(n);
     }
+
+    if (isBaseline) emitEvent("baseline", nullptr, 0, "baseline scan complete");
 
     WiFi.scanDelete();
     promiscStart();
@@ -1005,6 +1015,11 @@ void setup() {
 
     WiFi.mode(WIFI_STA);
     WiFi.disconnect();
+#if defined(CANARY_BOARD_T_DONGLE_C5)
+    g_radio2gReady = esp_wifi_set_band_mode(WIFI_BAND_MODE_2G_ONLY) == ESP_OK;
+    if (!g_radio2gReady)
+        Serial.println("[canary] 2.4 GHz band lock failed; scanning disabled");
+#endif
     delay(100);
 
     memset(g_aps,       0, sizeof(g_aps));

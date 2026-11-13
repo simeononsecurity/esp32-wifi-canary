@@ -2,6 +2,8 @@
 
 This document compares source configuration, not measured device behavior. The source snapshots are WiFi Canary `f6c437a`, Eye Spy `f5c2c7b`, and Flock You ESP32 `ea5dc188`. Recheck each repository before copying a setting.
 
+The 2026-11-13 implementation adds configuration to the selected flash manifest, bundles ESP Web Tools 10.5.2, bounds serial lines, and validates staged images. The gap descriptions below remain the historical review baseline.
+
 ## WiFi Canary build baseline
 
 | Item | Original `main` | Productization worktree |
