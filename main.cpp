@@ -24,31 +24,20 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include "esp_wifi.h"
+#include "canary_core.h"
+#include "canary_event.h"
+#include "canary_config.h"
+#include "canary_storage.h"
+#include "canary_event_log.h"
+#include "canary_board.h"
 
-#ifndef DEVKIT_LED
-  #include <Adafruit_NeoPixel.h>
-#endif
-
-// ============================================================
-// HARDWARE — M5Stack Atom Lite
-// ============================================================
-
-#ifndef DEVKIT_LED
-  #define LED_PIN    27
-  #define NUM_LEDS    1
-  Adafruit_NeoPixel pixel(NUM_LEDS, LED_PIN, NEO_GRB + NEO_KHZ800);
-#else
-  #define DEVKIT_LED_PIN 2
-#endif
-
-#define BUTTON_PIN  39
+using namespace canary;
 
 // ============================================================
 // CONFIGURATION
 // ============================================================
 
 // Baseline learning
-#define BASELINE_SCANS             3
 #define BASELINE_SCAN_INTERVAL_MS  8000
 
 // Normal operation
@@ -61,9 +50,9 @@ static const size_t  HOP_CHANNEL_COUNT = 3;
 
 // ── Deauth / disassoc burst ───────────────────────────────────
 #define DEAUTH_WINDOW_MS            5000
-#define DEAUTH_CAUTION_THRESHOLD       8
-#define DEAUTH_ALERT_THRESHOLD        20
-#define DEAUTH_BROADCAST_THRESHOLD     5
+#define DEAUTH_CAUTION_THRESHOLD       kDeauthCautionThreshold
+#define DEAUTH_ALERT_THRESHOLD         kDeauthAlertThreshold
+#define DEAUTH_BROADCAST_THRESHOLD     kDeauthBroadcastThreshold
 #define MAX_DEAUTH_SOURCES            24
 
 // ── Probe request flood ───────────────────────────────────────
@@ -71,8 +60,8 @@ static const size_t  HOP_CHANNEL_COUNT = 3;
 // A sudden flood correlates with deauth attacks (clients scanning
 // for alternatives) or aggressive scanning tools.
 #define PROBE_WINDOW_MS           10000
-#define PROBE_CAUTION_THRESHOLD      40   // probes / 10 s → caution
-#define PROBE_ALERT_THRESHOLD        80   // probes / 10 s → alert
+#define PROBE_CAUTION_THRESHOLD      kProbeCautionThreshold
+#define PROBE_ALERT_THRESHOLD        kProbeAlertThreshold
 
 // ── Pwnagotchi detector ───────────────────────────────────────
 // Pwnagotchi devices broadcast beacon frames from MAC de:ad:be:ef:de:ad.
@@ -92,35 +81,27 @@ static const size_t  HOP_CHANNEL_COUNT = 3;
 
 // ── Beacon / SSID spam ────────────────────────────────────────
 #define SPAM_WINDOW_MS           30000
-#define SPAM_CAUTION_THRESHOLD      15
-#define SPAM_ALERT_THRESHOLD        30
+#define SPAM_CAUTION_THRESHOLD      kSpamCautionThreshold
+#define SPAM_ALERT_THRESHOLD        kSpamAlertThreshold
 #define MAX_SPAM_SSIDS_TRACKED      64
 
 // ── RSSI ─────────────────────────────────────────────────────
 #define RSSI_MIN                   -95
-#define RSSI_STRONGER_BY            10
+#define RSSI_STRONGER_BY            kRssiStrongerBy
 
 // ── Confidence scoring ────────────────────────────────────────
-#define SCORE_CAUTION               3
-#define SCORE_ALERT                 6
-#define SCORE_MAX                  20
+#define SCORE_CAUTION               kScoreCaution
+#define SCORE_ALERT                 kScoreAlert
+#define SCORE_MAX                   kScoreMax
 #define SCORE_DECAY_INTERVAL_MS  60000
 #define SCORE_DECAY_AMOUNT           1
 
 // ── Misc ──────────────────────────────────────────────────────
 #define HEARTBEAT_MS             30000
-#define LED_DIM                    120
 
 // ============================================================
 // DEVICE STATE
 // ============================================================
-
-typedef enum : uint8_t {
-    STATE_STARTUP = 0,
-    STATE_NORMAL  = 1,
-    STATE_CAUTION = 2,
-    STATE_ALERT   = 3,
-} CanaryState;
 
 static CanaryState   g_state          = STATE_STARTUP;
 static unsigned long g_stateChangedAt = 0;
@@ -128,16 +109,6 @@ static unsigned long g_stateChangedAt = 0;
 // ============================================================
 // AP TABLE
 // ============================================================
-
-typedef enum : uint8_t {
-    AUTH_OPEN    = 0,
-    AUTH_WEP     = 1,
-    AUTH_WPA     = 2,
-    AUTH_WPA2    = 3,
-    AUTH_WPA3    = 4,
-    AUTH_WPA2E   = 5,
-    AUTH_UNKNOWN = 0xFF,
-} AuthStrength;
 
 typedef struct {
     char          ssid[SSID_LEN];
@@ -173,6 +144,7 @@ typedef struct {
 static volatile DeauthFrame g_deauthQ[DEAUTH_QUEUE_SIZE];
 static volatile size_t      g_dqHead = 0;
 static volatile size_t      g_dqTail = 0;
+static volatile uint32_t    g_dqDrops = 0;
 static portMUX_TYPE         g_dqMux  = portMUX_INITIALIZER_UNLOCKED;
 
 typedef struct {
@@ -180,6 +152,8 @@ typedef struct {
     uint32_t      count;
     uint32_t      broadcastCount;
     unsigned long windowStart;
+    int8_t        lastRssi;
+    uint8_t       lastChannel;
     bool          inUse;
 } DeauthSrc;
 
@@ -207,21 +181,26 @@ typedef struct {
     uint8_t  ssidSnap[PWNA_SSID_SNAP];
     uint8_t  ssidLen;
     int8_t   rssi;
+    uint8_t  channel;
 } PwnaRawEvent;
 
 static volatile PwnaRawEvent g_pwnaQ[PWNA_QUEUE_SIZE];
 static volatile size_t       g_pwnaHead = 0;
 static volatile size_t       g_pwnaTail = 0;
+static volatile uint32_t     g_pwnaDrops = 0;
 static portMUX_TYPE          g_pwnaMux  = portMUX_INITIALIZER_UNLOCKED;
 
 static bool          g_pwnaDetected = false;
 static bool          g_pwnaDeauth   = false;
 static char          g_pwnaName[32] = "";
 static int8_t        g_pwnaRssi     = -100;
+static uint8_t       g_pwnaChannel  = 0;
 static unsigned long g_pwnaLastSeen = 0;
 
 // Pwnagotchi's well-known fixed MAC address
 static const uint8_t PWNA_MAC[6] = {0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD};
+
+static void macStr(const uint8_t* m, char* buf);
 
 // ============================================================
 // BEACON / SSID SPAM TRACKER
@@ -239,89 +218,97 @@ static unsigned long g_spamWindowStart = 0;
 static int           g_score       = 0;
 static char          g_scoreReason[72] = "";
 static unsigned long g_lastDecay   = 0;
+static uint8_t       g_curChannel  = 1;
+static char          g_deviceId[17] = "unknown";
+static char          g_lastSource[18] = "";
+static char          g_lastSsid[SSID_LEN] = "";
+static int           g_lastEventChannel = -1;
+static int           g_lastEventRssi = -127;
+static CanaryConfig  g_config = defaultConfig();
+static EventLog      g_eventLog;
+static uint32_t      g_scanDurationMs = 0;
+static uint32_t      g_captureGapMs = 0;
+static volatile uint32_t g_parserRejects = 0;
+static volatile uint32_t g_channelFrames[15] = {};
+static uint32_t      g_minFreeHeap = UINT32_MAX;
 
-static void scoreAdd(int pts, const char* reason) {
-    if (pts <= 0) return;
-    g_score += pts;
-    if (g_score > SCORE_MAX) g_score = SCORE_MAX;
+static void emitEvent(const char* eventType, const char* detectorId,
+                      int scoreDelta, const char* reason,
+                      const char* ssid = nullptr, const char* bssid = nullptr,
+                      int channel = -1, int rssi = -127) {
+    char output[768];
+    const EventRecord event = {
+        g_deviceId,
+        kFirmwareVersion,
+        boardId(),
+        millis(),
+        eventType,
+        detectorId,
+        scoreDelta,
+        g_score,
+        stateFor(g_baselineLearned, g_score),
+        reason,
+        ssid,
+        bssid,
+        channel,
+        rssi,
+        {
+            g_apCount,
+            g_probeSampled,
+            g_curChannel,
+            static_cast<uint32_t>(g_dqDrops),
+            static_cast<uint32_t>(g_pwnaDrops),
+            g_scanDurationMs,
+            g_captureGapMs,
+            g_parserRejects,
+            g_eventLog.losses(),
+            ESP.getFreeHeap(),
+            g_minFreeHeap == UINT32_MAX ? ESP.getFreeHeap() : g_minFreeHeap,
+            static_cast<int>(esp_reset_reason()),
+            g_curChannel < 15 ? static_cast<uint32_t>(g_channelFrames[g_curChannel]) : 0,
+            static_cast<uint8_t>(g_baselineScansDone),
+            g_config.baselineScans,
+            g_baselineLearned,
+        },
+    };
+    if (formatEventJson(output, sizeof(output), event)) {
+        Serial.println(output);
+        if (!strcmp(eventType, "boot") || !strcmp(eventType, "detection"))
+            g_eventLog.append(output);
+    } else {
+        Serial.println("[canary] event serialization failed");
+    }
+}
+
+static void scoreAdd(int pts, const char* detectorId, const char* reason,
+                     const char* ssid = nullptr, const char* bssid = nullptr,
+                     int channel = -1, int rssi = -127) {
+    if (pts <= 0 || !detectorEnabled(g_config, detectorId)) return;
+    pts = sensitivityAdjusted(g_config, pts);
+    g_score = canary::addScore(g_score, pts);
     if (reason && reason[0]) {
         strncpy(g_scoreReason, reason, sizeof(g_scoreReason) - 1);
         g_scoreReason[sizeof(g_scoreReason) - 1] = '\0';
     }
+    strncpy(g_lastSource, bssid ? bssid : "", sizeof(g_lastSource) - 1);
+    g_lastSource[sizeof(g_lastSource) - 1] = '\0';
+    strncpy(g_lastSsid, ssid ? ssid : "", sizeof(g_lastSsid) - 1);
+    g_lastSsid[sizeof(g_lastSsid) - 1] = '\0';
+    g_lastEventChannel = channel;
+    g_lastEventRssi = rssi;
     Serial.printf("[canary] score +%d → %d  \"%s\"\n", pts, g_score, reason ? reason : "");
+    emitEvent("detection", detectorId, pts, reason, ssid, bssid, channel, rssi);
 }
 
 static void scoreDecay() {
     if (millis() - g_lastDecay < SCORE_DECAY_INTERVAL_MS) return;
     g_lastDecay = millis();
     if (g_score > 0) {
-        g_score -= SCORE_DECAY_AMOUNT;
-        if (g_score < 0) g_score = 0;
+        g_score = canary::decayScore(g_score, SCORE_DECAY_AMOUNT);
         Serial.printf("[canary] score decay → %d\n", g_score);
+        emitEvent("decay", "score_decay", -SCORE_DECAY_AMOUNT,
+                  "quiet-period score decay");
     }
-}
-
-// ============================================================
-// 802.11 FRAME HEADER
-// ============================================================
-
-typedef struct __attribute__((packed)) {
-    uint16_t frame_ctrl;
-    uint16_t duration;
-    uint8_t  addr1[6];
-    uint8_t  addr2[6];
-    uint8_t  addr3[6];
-    uint16_t seq_ctrl;
-} ieee80211_hdr_t;
-
-// ============================================================
-// LED CONTROL
-// ============================================================
-
-static unsigned long g_ledLastUpdate = 0;
-#define LED_TICK_MS 80
-
-static void ledSetRGB(uint8_t r, uint8_t g, uint8_t b) {
-#ifndef DEVKIT_LED
-    pixel.setPixelColor(0, pixel.Color(r, g, b));
-    pixel.show();
-#else
-    digitalWrite(DEVKIT_LED_PIN, (r | g | b) ? HIGH : LOW);
-#endif
-}
-
-static void ledTick() {
-    unsigned long now = millis();
-    if (now - g_ledLastUpdate < LED_TICK_MS) return;
-    g_ledLastUpdate = now;
-
-    switch (g_state) {
-        case STATE_STARTUP: {
-            float ph = (float)(now % 2000) / 2000.0f;
-            float br = 0.25f + 0.75f * (ph < 0.5f ? ph * 2.0f : (1.0f - ph) * 2.0f);
-            ledSetRGB(0, 0, (uint8_t)(60 * br));
-            break;
-        }
-        case STATE_NORMAL:
-            ledSetRGB(0, 40, 0);
-            break;
-        case STATE_CAUTION:
-            ledSetRGB(70, 35, 0);
-            break;
-        case STATE_ALERT: {
-            float ph = (float)(now % 800) / 800.0f;
-            float br = 0.35f + 0.65f * (ph < 0.5f ? ph * 2.0f : (1.0f - ph) * 2.0f);
-            ledSetRGB((uint8_t)(110 * br), 0, 0);
-            break;
-        }
-    }
-}
-
-static void ledScanFlash() {
-    ledSetRGB(0, 30, 40);
-#ifndef DEVKIT_LED
-    pixel.show();
-#endif
 }
 
 // ============================================================
@@ -329,7 +316,6 @@ static void ledScanFlash() {
 // ============================================================
 
 static bool          g_promisc    = false;
-static uint8_t       g_curChannel = 1;
 static size_t        g_hopIdx     = 0;
 static unsigned long g_lastHop    = 0;
 
@@ -343,17 +329,17 @@ static void IRAM_ATTR wifiSniffer(void* buf, wifi_promiscuous_pkt_type_t type) {
     if (!buf || type != WIFI_PKT_MGMT) return;
 
     wifi_promiscuous_pkt_t* pkt = (wifi_promiscuous_pkt_t*)buf;
-    if (pkt->rx_ctrl.sig_len < (uint32_t)sizeof(ieee80211_hdr_t)) return;
+    if (pkt->rx_ctrl.channel < 15) ++g_channelFrames[pkt->rx_ctrl.channel];
+    ParsedMgmtFrame frame;
+    if (!parseManagementFrame(pkt->payload, pkt->rx_ctrl.sig_len, &frame)) {
+        ++g_parserRejects;
+        return;
+    }
 
     int8_t rssi = pkt->rx_ctrl.rssi;
     if (rssi < RSSI_MIN) return;
 
-    ieee80211_hdr_t* hdr = (ieee80211_hdr_t*)pkt->payload;
-    uint8_t fc0     = (uint8_t)(hdr->frame_ctrl & 0xFF);
-    uint8_t ftype   = (fc0 >> 2) & 0x03;
-    uint8_t subtype = (fc0 >> 4) & 0x0F;
-
-    if (ftype != 0) return;   // management frames only
+    const uint8_t subtype = frame.subtype;
 
     // ── Probe request flood counter (subtype 4) ──────────────
     if (subtype == 4) {
@@ -366,40 +352,24 @@ static void IRAM_ATTR wifiSniffer(void* buf, wifi_promiscuous_pkt_type_t type) {
     // ── Pwnagotchi beacon detector (subtype 8) ────────────────
     // Pwnagotchi beacons from de:ad:be:ef:de:ad; SSID = JSON payload
     if (subtype == 8) {
-        if (hdr->addr2[0] == PWNA_MAC[0] &&
-            hdr->addr2[1] == PWNA_MAC[1] &&
-            hdr->addr2[2] == PWNA_MAC[2] &&
-            hdr->addr2[3] == PWNA_MAC[3] &&
-            hdr->addr2[4] == PWNA_MAC[4] &&
-            hdr->addr2[5] == PWNA_MAC[5]) {
-
-            // Beacon fixed fields: 12 bytes after the 24-byte MAC header
-            int bodyOffset = (int)sizeof(ieee80211_hdr_t) + 12;
-            int bodyLen    = (int)pkt->rx_ctrl.sig_len - bodyOffset - 4; // strip FCS
-            if (bodyLen > 2) {
-                const uint8_t* body = pkt->payload + bodyOffset;
-                int rem = bodyLen;
-                while (rem >= 2) {
-                    uint8_t tag  = body[0];
-                    uint8_t elen = body[1];
-                    if ((int)elen + 2 > rem) break;
-                    if (tag == 0 && elen > 0) {
-                        portENTER_CRITICAL_ISR(&g_pwnaMux);
-                        size_t next = (g_pwnaHead + 1) % PWNA_QUEUE_SIZE;
-                        if (next != g_pwnaTail) {
-                            PwnaRawEvent* e = (PwnaRawEvent*)&g_pwnaQ[g_pwnaHead];
-                            uint8_t snap = (elen < PWNA_SSID_SNAP) ? elen : (PWNA_SSID_SNAP - 1);
-                            memcpy((void*)e->ssidSnap, body + 2, snap);
-                            e->ssidLen = snap;
-                            e->rssi    = rssi;
-                            g_pwnaHead = next;
-                        }
-                        portEXIT_CRITICAL_ISR(&g_pwnaMux);
-                        break;
-                    }
-                    body += elen + 2;
-                    rem  -= elen + 2;
+        if (bytesEqual(frame.addr2, PWNA_MAC, 6)) {
+            uint8_t ssid[PWNA_SSID_SNAP];
+            size_t ssidLength = 0;
+            const size_t frameLength = pkt->rx_ctrl.sig_len > 4 ? pkt->rx_ctrl.sig_len - 4 : 0;
+            if (extractBeaconSsid(pkt->payload, frameLength, ssid, sizeof(ssid), &ssidLength)) {
+                portENTER_CRITICAL_ISR(&g_pwnaMux);
+                const size_t next = ringNext(g_pwnaHead, PWNA_QUEUE_SIZE);
+                if (ringHasSpace(g_pwnaHead, g_pwnaTail, PWNA_QUEUE_SIZE)) {
+                    PwnaRawEvent* e = (PwnaRawEvent*)&g_pwnaQ[g_pwnaHead];
+                    memcpy((void*)e->ssidSnap, ssid, ssidLength);
+                    e->ssidLen = static_cast<uint8_t>(ssidLength);
+                    e->rssi = rssi;
+                    e->channel = static_cast<uint8_t>(pkt->rx_ctrl.channel);
+                    g_pwnaHead = next;
+                } else {
+                    ++g_pwnaDrops;
                 }
+                portEXIT_CRITICAL_ISR(&g_pwnaMux);
             }
         }
         return;
@@ -409,15 +379,17 @@ static void IRAM_ATTR wifiSniffer(void* buf, wifi_promiscuous_pkt_type_t type) {
     if (subtype != 10 && subtype != 12) return;
 
     portENTER_CRITICAL_ISR(&g_dqMux);
-    size_t next = (g_dqHead + 1) % DEAUTH_QUEUE_SIZE;
-    if (next != g_dqTail) {
+    size_t next = ringNext(g_dqHead, DEAUTH_QUEUE_SIZE);
+    if (ringHasSpace(g_dqHead, g_dqTail, DEAUTH_QUEUE_SIZE)) {
         DeauthFrame* f = (DeauthFrame*)&g_deauthQ[g_dqHead];
-        memcpy((void*)f->src, hdr->addr2, 6);
-        memcpy((void*)f->dst, hdr->addr1, 6);
+        memcpy((void*)f->src, frame.addr2, 6);
+        memcpy((void*)f->dst, frame.addr1, 6);
         f->subtype = subtype;
         f->rssi    = rssi;
         f->channel = (uint8_t)pkt->rx_ctrl.channel;
         g_dqHead   = next;
+    } else {
+        ++g_dqDrops;
     }
     portEXIT_CRITICAL_ISR(&g_dqMux);
 }
@@ -455,11 +427,6 @@ static void channelHop() {
 // DEAUTH ANALYSIS
 // ============================================================
 
-static inline bool isBroadcastMAC(const uint8_t* m) {
-    return m[0] == 0xFF && m[1] == 0xFF && m[2] == 0xFF &&
-           m[3] == 0xFF && m[4] == 0xFF && m[5] == 0xFF;
-}
-
 static void drainDeauthQueue() {
     while (true) {
         portENTER_CRITICAL(&g_dqMux);
@@ -470,7 +437,7 @@ static void drainDeauthQueue() {
         DeauthFrame frame;
         portENTER_CRITICAL(&g_dqMux);
         memcpy(&frame, (void*)&g_deauthQ[g_dqTail], sizeof(DeauthFrame));
-        g_dqTail = (g_dqTail + 1) % DEAUTH_QUEUE_SIZE;
+        g_dqTail = ringNext(g_dqTail, DEAUTH_QUEUE_SIZE);
         portEXIT_CRITICAL(&g_dqMux);
 
         unsigned long now = millis();
@@ -500,7 +467,9 @@ static void drainDeauthQueue() {
             slot->windowStart = now;
         }
         slot->count++;
-        if (isBroadcastMAC(frame.dst)) slot->broadcastCount++;
+        slot->lastRssi = frame.rssi;
+        slot->lastChannel = frame.channel;
+        if (isBroadcastMac(frame.dst)) slot->broadcastCount++;
     }
 }
 
@@ -511,19 +480,29 @@ static void analyzeDeauthSources() {
         if (now - g_deauthSrc[i].windowStart > DEAUTH_WINDOW_MS) continue;
         uint32_t cnt  = g_deauthSrc[i].count;
         uint32_t bcnt = g_deauthSrc[i].broadcastCount;
-        if (cnt >= (uint32_t)DEAUTH_ALERT_THRESHOLD) {
-            scoreAdd(4, "deauth/disassoc burst (alert-level rate)");
+        char sourceBuf[18];
+        macStr(g_deauthSrc[i].src, sourceBuf);
+        const int burstPoints = deauthBurstPoints(cnt);
+        if (burstPoints == 4) {
+            scoreAdd(burstPoints, "deauth_burst",
+                     "deauth/disassoc burst (alert-level rate)",
+                     nullptr, sourceBuf, g_deauthSrc[i].lastChannel, g_deauthSrc[i].lastRssi);
             Serial.printf("[canary] DEAUTH ALERT: %lu f/5s src=%02x:%02x:%02x:...\n",
                           (unsigned long)cnt,
                           g_deauthSrc[i].src[0], g_deauthSrc[i].src[1], g_deauthSrc[i].src[2]);
-        } else if (cnt >= (uint32_t)DEAUTH_CAUTION_THRESHOLD) {
-            scoreAdd(2, "deauth/disassoc burst (elevated rate)");
+        } else if (burstPoints == 2) {
+            scoreAdd(burstPoints, "deauth_burst",
+                     "deauth/disassoc burst (elevated rate)",
+                     nullptr, sourceBuf, g_deauthSrc[i].lastChannel, g_deauthSrc[i].lastRssi);
             Serial.printf("[canary] DEAUTH caution: %lu f/5s src=%02x:%02x:%02x:...\n",
                           (unsigned long)cnt,
                           g_deauthSrc[i].src[0], g_deauthSrc[i].src[1], g_deauthSrc[i].src[2]);
         }
-        if (bcnt >= (uint32_t)DEAUTH_BROADCAST_THRESHOLD) {
-            scoreAdd(1, "broadcast deauth frames observed");
+        const int broadcastPoints = broadcastDeauthPoints(bcnt);
+        if (broadcastPoints > 0) {
+            scoreAdd(broadcastPoints, "broadcast_deauth",
+                     "broadcast deauth frames observed",
+                     nullptr, sourceBuf, g_deauthSrc[i].lastChannel, g_deauthSrc[i].lastRssi);
         }
     }
 }
@@ -544,12 +523,15 @@ static void analyzeProbeFlood() {
 
     if (g_probeSampled == 0) return;
 
-    if (g_probeSampled >= (uint32_t)PROBE_ALERT_THRESHOLD) {
-        scoreAdd(3, "probe request flood (attack-tool level)");
+    const int points = probeFloodPoints(g_probeSampled);
+    if (points == 3) {
+        scoreAdd(points, "probe_flood", "probe request flood (attack-tool level)",
+                 nullptr, nullptr, g_curChannel);
         Serial.printf("[canary] PROBE FLOOD ALERT: %lu probes/10s\n",
                       (unsigned long)g_probeSampled);
-    } else if (g_probeSampled >= (uint32_t)PROBE_CAUTION_THRESHOLD) {
-        scoreAdd(1, "probe request flood (elevated)");
+    } else if (points == 1) {
+        scoreAdd(points, "probe_flood", "probe request flood (elevated)",
+                 nullptr, nullptr, g_curChannel);
         Serial.printf("[canary] PROBE FLOOD caution: %lu probes/10s\n",
                       (unsigned long)g_probeSampled);
     }
@@ -561,14 +543,6 @@ static void analyzeProbeFlood() {
 // Avoids JSON library by using simple byte-pattern search.
 // ============================================================
 
-static const uint8_t* memfind(const uint8_t* hay, int hlen,
-                               const char* needle, int nlen) {
-    for (int i = 0; i <= hlen - nlen; i++) {
-        if (memcmp(hay + i, needle, nlen) == 0) return hay + i;
-    }
-    return nullptr;
-}
-
 static void drainPwnaQueue() {
     while (true) {
         portENTER_CRITICAL(&g_pwnaMux);
@@ -579,32 +553,24 @@ static void drainPwnaQueue() {
         PwnaRawEvent ev;
         portENTER_CRITICAL(&g_pwnaMux);
         memcpy(&ev, (void*)&g_pwnaQ[g_pwnaTail], sizeof(PwnaRawEvent));
-        g_pwnaTail = (g_pwnaTail + 1) % PWNA_QUEUE_SIZE;
+        g_pwnaTail = ringNext(g_pwnaTail, PWNA_QUEUE_SIZE);
         portEXIT_CRITICAL(&g_pwnaMux);
 
         const uint8_t* data = ev.ssidSnap;
         int dlen = ev.ssidLen;
 
-        if (dlen < 2 || data[0] != '{') continue;
-
-        // Extract name from "name":"VALUE"
-        const uint8_t* nameToken = memfind(data, dlen, "\"name\":\"", 8);
-        if (nameToken) {
-            const uint8_t* nameStart = nameToken + 8;
-            int remaining = dlen - (int)(nameStart - data);
-            int nameLen = 0;
-            while (nameLen < remaining && nameLen < 31 && nameStart[nameLen] != '"')
-                nameLen++;
-            memcpy(g_pwnaName, nameStart, nameLen);
-            g_pwnaName[nameLen] = '\0';
+        const PwnagotchiMetadata metadata = parsePwnagotchiMetadata(data, dlen);
+        if (!metadata.valid) continue;
+        if (metadata.name[0]) {
+            strncpy(g_pwnaName, metadata.name, sizeof(g_pwnaName) - 1);
+            g_pwnaName[sizeof(g_pwnaName) - 1] = '\0';
         }
-
-        // Check for active deauth policy
-        bool deauthOn = (memfind(data, dlen, "\"deauth\":true", 13) != nullptr);
+        const bool deauthOn = metadata.deauth;
 
         g_pwnaDetected = true;
         g_pwnaDeauth   = deauthOn;
         g_pwnaRssi     = ev.rssi;
+        g_pwnaChannel  = ev.channel;
         g_pwnaLastSeen = millis();
 
         Serial.printf("[canary] PWNAGOTCHI: name='%s' deauth=%s rssi=%d\n",
@@ -626,11 +592,19 @@ static void analyzePwnagotchi() {
     }
 
     if (g_pwnaDeauth) {
-        scoreAdd(4, "pwnagotchi detected: deauth policy ACTIVE");
+        char bssid[18];
+        macStr(PWNA_MAC, bssid);
+        scoreAdd(pwnagotchiPoints(true), "pwnagotchi",
+                 "pwnagotchi detected: deauth policy ACTIVE",
+                 g_pwnaName, bssid, g_pwnaChannel, g_pwnaRssi);
         Serial.printf("[canary] PWNAGOTCHI ALERT: '%s' is attacking (deauth=true) rssi=%d\n",
                       g_pwnaName[0] ? g_pwnaName : "?", g_pwnaRssi);
     } else {
-        scoreAdd(2, "pwnagotchi detected (passive mode)");
+        char bssid[18];
+        macStr(PWNA_MAC, bssid);
+        scoreAdd(pwnagotchiPoints(false), "pwnagotchi",
+                 "pwnagotchi detected (passive mode)",
+                 g_pwnaName, bssid, g_pwnaChannel, g_pwnaRssi);
         Serial.printf("[canary] PWNAGOTCHI caution: '%s' rssi=%d (passive/harvesting)\n",
                       g_pwnaName[0] ? g_pwnaName : "?", g_pwnaRssi);
     }
@@ -662,18 +636,6 @@ static const char* authStr(AuthStrength a) {
         case AUTH_WPA3:  return "WPA3";
         case AUTH_WPA2E: return "WPA2-ENT";
         default:         return "?";
-    }
-}
-
-static uint8_t authRank(AuthStrength a) {
-    switch (a) {
-        case AUTH_OPEN:  return 0;
-        case AUTH_WEP:   return 1;
-        case AUTH_WPA:   return 2;
-        case AUTH_WPA2:  return 3;
-        case AUTH_WPA2E: return 4;
-        case AUTH_WPA3:  return 5;
-        default:         return 0;
     }
 }
 
@@ -740,12 +702,13 @@ static void updateSpamTracker(int scanCount) {
         }
         if (!inBaseline && !seenInWindow) g_spamNew++;
     }
-    if (g_spamNew >= SPAM_ALERT_THRESHOLD) {
-        scoreAdd(3, "beacon/SSID flood: very high new-SSID count");
+    const int points = beaconFloodPoints(g_spamNew);
+    if (points == 3) {
+        scoreAdd(points, "beacon_flood", "beacon/SSID flood: very high new-SSID count");
         Serial.printf("[canary] SPAM ALERT: %d new SSIDs/%ds\n",
                       g_spamNew, SPAM_WINDOW_MS / 1000);
-    } else if (g_spamNew >= SPAM_CAUTION_THRESHOLD) {
-        scoreAdd(2, "beacon/SSID flood: elevated new-SSID count");
+    } else if (points == 2) {
+        scoreAdd(points, "beacon_flood", "beacon/SSID flood: elevated new-SSID count");
         Serial.printf("[canary] SPAM caution: %d new SSIDs/%ds\n",
                       g_spamNew, SPAM_WINDOW_MS / 1000);
     }
@@ -769,11 +732,12 @@ static void analyzeScanThreats(int scanCount) {
 
         // ── WiFi Pineapple OUI check ──────────────────────────
         // Hak5 WiFi Pineapple uses "1337" hex in BSSID bytes [1:2]
-        if (bssid[1] == 0x13 && bssid[2] == 0x37) {
+        if (isPineappleBssid(bssid)) {
             char reason[72];
             snprintf(reason, sizeof(reason),
                      "WiFi Pineapple OUI: SSID='%.28s'", ssid);
-            scoreAdd(4, reason);
+            scoreAdd(4, "wifi_pineapple", reason, ssid, bssidBuf,
+                     WiFi.channel(i), rssi);
             Serial.printf("[canary] PINEAPPLE ALERT: SSID='%s' bssid=%s rssi=%d\n",
                           ssid, bssidBuf, rssi);
         }
@@ -791,15 +755,20 @@ static void analyzeScanThreats(int scanCount) {
         }
         if (!baseAP) continue;
 
+        const AccessPointView baseline = {
+            baseAP->ssid, baseAP->bssid, baseAP->rssi, baseAP->auth
+        };
+        const AccessPointView observed = {ssid, bssid, rssi, auth};
+        const AccessPointThreat threat = evaluateAccessPointThreat(
+            baseline, observed, bssidIsNew);
+
         // ── Open clone of known encrypted SSID ───────────────
-        if (auth == AUTH_OPEN && baseAP->auth != AUTH_OPEN) {
-            int pts = 3;
-            if (bssidIsNew)                              pts++;
-            if (rssi > baseAP->rssi + RSSI_STRONGER_BY) pts++;
+        if (threat.openClonePoints > 0) {
             char reason[72];
             snprintf(reason, sizeof(reason),
                      "open clone of encrypted SSID '%.28s'", ssid);
-            scoreAdd(pts, reason);
+            scoreAdd(threat.openClonePoints, "open_clone", reason, ssid, bssidBuf,
+                     WiFi.channel(i), rssi);
             Serial.printf("[canary] OPEN CLONE: SSID='%s' baseline=%s clone=OPEN "
                           "bssid=%s rssi=%d/%d\n",
                           ssid, authStr(baseAP->auth), bssidBuf, rssi, baseAP->rssi);
@@ -807,29 +776,24 @@ static void analyzeScanThreats(int scanCount) {
         }
 
         // ── Security downgrade ────────────────────────────────
-        if (baseAP->auth != AUTH_UNKNOWN && auth != AUTH_UNKNOWN &&
-            auth != AUTH_OPEN &&
-            authRank(auth) < authRank(baseAP->auth)) {
-            int delta = (int)authRank(baseAP->auth) - (int)authRank(auth);
-            int pts = (delta >= 2) ? 3 : 1;
+        if (threat.downgradePoints > 0) {
             char reason[72];
             snprintf(reason, sizeof(reason),
                      "security downgrade '%.24s': %s→%s",
                      ssid, authStr(baseAP->auth), authStr(auth));
-            scoreAdd(pts, reason);
+            scoreAdd(threat.downgradePoints, "security_downgrade", reason,
+                     ssid, bssidBuf, WiFi.channel(i), rssi);
             Serial.printf("[canary] SEC DOWNGRADE: SSID='%s' was=%s now=%s bssid=%s\n",
                           ssid, authStr(baseAP->auth), authStr(auth), bssidBuf);
         }
 
         // ── Duplicate SSID with unexpected vendor OUI ─────────
-        if (bssidIsNew && auth == baseAP->auth &&
-            memcmp(baseAP->bssid, bssid, 3) != 0) {
-            int pts = 1;
-            if (rssi > baseAP->rssi + RSSI_STRONGER_BY) pts++;
+        if (threat.duplicateVendorPoints > 0) {
             char reason[72];
             snprintf(reason, sizeof(reason),
                      "dup SSID diff vendor: '%.30s'", ssid);
-            scoreAdd(pts, reason);
+            scoreAdd(threat.duplicateVendorPoints, "duplicate_ssid_vendor", reason,
+                     ssid, bssidBuf, WiFi.channel(i), rssi);
             Serial.printf("[canary] DUP SSID: SSID='%s' known=%02x:%02x:%02x "
                           "new=%02x:%02x:%02x rssi=%d/%d\n",
                           ssid,
@@ -845,12 +809,26 @@ static void analyzeScanThreats(int scanCount) {
         if (g_aps[j].auth == AUTH_OPEN) continue;
         if (g_aps[j].activeScan)        continue;
         for (int i = 0; i < scanCount; i++) {
-            if (WiFi.encryptionType(i) != WIFI_AUTH_OPEN) continue;
-            if (strcasecmp(WiFi.SSID(i).c_str(), g_aps[j].ssid) != 0) continue;
+            uint8_t* observedBssid = WiFi.BSSID(i);
+            if (!observedBssid) continue;
+            const AccessPointView baseline = {
+                g_aps[j].ssid, g_aps[j].bssid, g_aps[j].rssi, g_aps[j].auth
+            };
+            const String observedSsid = WiFi.SSID(i);
+            const AccessPointView observed = {
+                observedSsid.c_str(), observedBssid, static_cast<int8_t>(WiFi.RSSI(i)),
+                mapAuth(WiFi.encryptionType(i))
+            };
+            const int points = missingOriginalOpenClonePoints(
+                baseline, observed, g_aps[j].activeScan);
+            if (points == 0) continue;
             char reason[72];
             snprintf(reason, sizeof(reason),
                      "original AP gone, open clone present: '%.26s'", g_aps[j].ssid);
-            scoreAdd(3, reason);
+            char bssidBuf[18];
+            macStr(observedBssid, bssidBuf);
+            scoreAdd(points, "missing_original_open_clone", reason,
+                     observedSsid.c_str(), bssidBuf, WiFi.channel(i), WiFi.RSSI(i));
             Serial.printf("[canary] ABSENT+CLONE: original '%s' gone, open clone present\n",
                           g_aps[j].ssid);
         }
@@ -862,16 +840,24 @@ static void analyzeScanThreats(int scanCount) {
 // ============================================================
 
 static unsigned long g_lastScan = 0;
+static bool g_radio2gReady = true;
 
 static void performScan(bool isBaseline) {
+    if (!g_radio2gReady) {
+        g_lastScan = millis();
+        return;
+    }
+    const unsigned long scanStarted = millis();
     promiscStop();
-    ledScanFlash();
+    boardShowScan();
     Serial.printf("[canary] %s scan (aps=%d score=%d)\n",
                   isBaseline ? "baseline" : "normal", g_apCount, g_score);
     markAllInactive();
 
-    int n = WiFi.scanNetworks(false, true);
+    int n = WiFi.scanNetworks(false, true, true, 300);
     g_lastScan = millis();
+    g_scanDurationMs = g_lastScan - scanStarted;
+    g_captureGapMs += g_scanDurationMs;
 
     if (n < 0) {
         Serial.printf("[canary] scan error: %d\n", n);
@@ -891,7 +877,7 @@ static void performScan(bool isBaseline) {
 
     if (isBaseline) {
         g_baselineScansDone++;
-        if (g_baselineScansDone >= BASELINE_SCANS) {
+        if (g_baselineScansDone >= g_config.baselineScans) {
             g_baselineLearned = true;
             for (int i = 0; i < g_apCount; i++) g_aps[i].inBaseline = true;
             Serial.printf("[canary] baseline complete: %d APs\n", g_apCount);
@@ -903,12 +889,14 @@ static void performScan(bool isBaseline) {
             }
         } else {
             Serial.printf("[canary] baseline scan %d/%d\n",
-                          g_baselineScansDone, BASELINE_SCANS);
+                          g_baselineScansDone, g_config.baselineScans);
         }
     } else {
         updateSpamTracker(n);
         analyzeScanThreats(n);
     }
+
+    if (isBaseline) emitEvent("baseline", nullptr, 0, "baseline scan complete");
 
     WiFi.scanDelete();
     promiscStart();
@@ -919,22 +907,15 @@ static void performScan(bool isBaseline) {
 // ============================================================
 
 static void updateState() {
-    CanaryState next;
-    if (!g_baselineLearned) {
-        next = STATE_STARTUP;
-    } else if (g_score >= SCORE_ALERT) {
-        next = STATE_ALERT;
-    } else if (g_score >= SCORE_CAUTION) {
-        next = STATE_CAUTION;
-    } else {
-        next = STATE_NORMAL;
-    }
+    const CanaryState next = stateFor(g_baselineLearned, g_score);
     if (next != g_state) {
         static const char* n[] = { "STARTUP","NORMAL","CAUTION","ALERT" };
         Serial.printf("[canary] %s → %s  (score=%d  \"%s\")\n",
                       n[g_state], n[next], g_score, g_scoreReason);
+        boardNotifyState(g_state, next);
         g_state = next;
         g_stateChangedAt = millis();
+        emitEvent("state", nullptr, 0, g_scoreReason);
     }
 }
 
@@ -954,18 +935,15 @@ static void printHeartbeat() {
                   g_apCount, (unsigned long)g_probeSampled,
                   g_curChannel,
                   g_pwnaDetected ? (g_pwnaDeauth ? "ACTIVE" : "passive") : "none");
+    emitEvent("status", nullptr, 0, g_scoreReason);
 }
 
 // ============================================================
 // BUTTON — dump AP table + reset score
 // ============================================================
 
-static unsigned long g_btnLastMs    = 0;
-static bool          g_btnLastState = true;
-
 static void handleButton() {
-    bool pressed = (digitalRead(BUTTON_PIN) == LOW);
-    if (pressed && !g_btnLastState && (millis() - g_btnLastMs > 50)) {
+    if (boardButtonPressed()) {
         Serial.println("[canary] button: AP table dump + score reset");
         for (int i = 0; i < g_apCount; i++) {
             char b[18]; macStr(g_aps[i].bssid, b);
@@ -978,41 +956,73 @@ static void handleButton() {
             Serial.printf("[canary] pwnagotchi: '%s' deauth=%s rssi=%d\n",
                           g_pwnaName, g_pwnaDeauth ? "YES" : "no", g_pwnaRssi);
         }
+        const int clearedScore = g_score;
         g_score = 0;
         g_scoreReason[0] = '\0';
         Serial.println("[canary] score reset to 0");
-        g_btnLastMs = millis();
+        emitEvent("reset", "button", -clearedScore, "button score reset");
     }
-    g_btnLastState = pressed;
+}
+
+static void handleSerialCommands() {
+    static char command[16];
+    static size_t used = 0;
+    while (Serial.available()) {
+        const char value = static_cast<char>(Serial.read());
+        if (value == '\r') continue;
+        if (value == '\n') {
+            command[used] = '\0';
+            if (!strcmp(command, "dumplog")) {
+                g_eventLog.dump(Serial);
+                Serial.println("[canary] replay complete");
+            }
+            else if (!strcmp(command, "clearlog"))
+                Serial.println(g_eventLog.clear() ? "[canary] log cleared" : "[canary] log clear failed");
+            used = 0;
+        } else if (used + 1 < sizeof(command)) command[used++] = value;
+        else used = 0;
+    }
 }
 
 // ============================================================
 // SETUP
 // ============================================================
 
+static void initDeviceId() {
+    const uint64_t mac = ESP.getEfuseMac();
+    snprintf(g_deviceId, sizeof(g_deviceId), "%04x%08x",
+             static_cast<unsigned int>((mac >> 32) & 0xFFFF),
+             static_cast<unsigned int>(mac & 0xFFFFFFFF));
+}
+
 void setup() {
     Serial.begin(115200);
     delay(500);
     Serial.println();
     Serial.println("================================");
-    Serial.println(" Travel WiFi Canary v1.1");
+    Serial.printf(" Travel WiFi Canary v%s\n", kFirmwareVersion);
     Serial.println(" Passive 2.4 GHz awareness");
     Serial.println("================================");
 
-#ifndef DEVKIT_LED
-    pixel.begin();
-    pixel.setBrightness(LED_DIM);
-    pixel.setPixelColor(0, pixel.Color(0, 0, 60));
-    pixel.show();
-#else
-    pinMode(DEVKIT_LED_PIN, OUTPUT);
-    digitalWrite(DEVKIT_LED_PIN, HIGH);
-#endif
+    initDeviceId();
+    Serial.printf("[canary] event schema=%d device=%s firmware=%s board=%s\n",
+                  kEventSchema, g_deviceId, kFirmwareVersion, boardId());
 
-    pinMode(BUTTON_PIN, INPUT_PULLUP);
+    const bool configValid = loadConfigPartition(&g_config);
+    g_eventLog.begin();
+    boardConfigure(g_config);
+    boardBegin();
+    Serial.printf("[canary] config=%s sensitivity=%u baseline_scans=%u engines=0x%03x\n",
+                  configValid ? "stored" : "defaults", g_config.sensitivity,
+                  g_config.baselineScans, g_config.engineMask);
 
     WiFi.mode(WIFI_STA);
     WiFi.disconnect();
+#if defined(CANARY_BOARD_T_DONGLE_C5)
+    g_radio2gReady = esp_wifi_set_band_mode(WIFI_BAND_MODE_2G_ONLY) == ESP_OK;
+    if (!g_radio2gReady)
+        Serial.println("[canary] 2.4 GHz band lock failed; scanning disabled");
+#endif
     delay(100);
 
     memset(g_aps,       0, sizeof(g_aps));
@@ -1030,9 +1040,9 @@ void setup() {
     g_lastDecay         = millis();
     g_lastScan          = 0;
     g_lastHeartbeat     = millis();
-    g_ledLastUpdate     = millis();
 
     Serial.println("[canary] setup done — starting baseline learning");
+    emitEvent("boot", nullptr, 0, "starting baseline learning");
 }
 
 // ============================================================
@@ -1041,8 +1051,11 @@ void setup() {
 
 void loop() {
     unsigned long now = millis();
+    const uint32_t freeHeap = ESP.getFreeHeap();
+    if (freeHeap < g_minFreeHeap) g_minFreeHeap = freeHeap;
 
-    ledTick();
+    boardTick(g_state, g_score, g_scoreReason, g_lastSource, g_lastSsid,
+              g_lastEventChannel, g_lastEventRssi, g_baselineLearned);
     channelHop();
     drainDeauthQueue();
     drainPwnaQueue();
@@ -1057,6 +1070,7 @@ void loop() {
     updateState();
     printHeartbeat();
     handleButton();
+    handleSerialCommands();
 
     if (!g_baselineLearned) {
         if (now - g_lastScan >= BASELINE_SCAN_INTERVAL_MS)

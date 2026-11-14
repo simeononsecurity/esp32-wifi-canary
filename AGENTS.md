@@ -1,6 +1,6 @@
 # Agent Instructions: Travel WiFi Canary
 
-A passive 2.4 GHz WiFi awareness sensor for the M5Stack Atom Lite (ESP32-PICO). The whole firmware is one Arduino file, `main.cpp` (~1,070 lines), built with PlatformIO (`src_dir = .`).
+A passive 2.4 GHz WiFi awareness sensor with M5Stack Atom Lite as the reference device. The firmware entry point is `main.cpp`, built with PlatformIO (`src_dir = .`).
 
 ## Build and verify
 ```bash
@@ -8,7 +8,7 @@ pio run -e atom-lite -e esp32dev     # build BOTH envs; report the real compiler
 pio run -e atom-lite -t upload       # only when a device is attached and the task says to flash
 pio device monitor -b 115200
 ```
-- `atom-lite` drives the SK6812 RGB LED on GPIO27 (Adafruit NeoPixel) and the button on GPIO39. `esp32dev` sets `-DDEVKIT_LED`, so the GPIO2 LED is on/off only and has no colour.
+- `atom-lite` drives the SK6812 RGB LED on GPIO27 (Adafruit NeoPixel) and the button on GPIO39. `esp32dev` sets `-DCANARY_BOARD_ESP32DEV`, so the GPIO2 LED is on/off only and has no colour.
 - The partition table is `partitions_4mb.csv`. Compiling is not the same as working: say whether a change was hardware-tested or only built.
 
 ## Detection engines (keep the README in sync with any change)

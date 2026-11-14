@@ -1,0 +1,82 @@
+name: Test and build firmware
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  software-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install PlatformIO
+        run: python -m pip install platformio
+      - name: Run host parser tests
+        run: python -m unittest discover -s tools -p 'test_*.py'
+      - name: Run browser tests
+        run: node web/test.mjs
+      - name: Run native firmware tests
+        run: pio test -e native
+
+  firmware-builds:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - environment: atom-lite
+          - environment: esp32dev
+          - environment: atom-echo
+          - environment: atom-voice
+          - environment: m5stack-basic
+          - environment: m5stack-core2-aws
+          - environment: m5stickc-plus-se
+          - environment: lilygo-t-dongle-c5
+            experimental: true
+    continue-on-error: ${{ matrix.experimental == true }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install PlatformIO
+        run: python -m pip install platformio
+      - name: Build firmware
+        run: pio run -e ${{ matrix.environment }}
+
+  release-artifacts:
+    if: github.event_name != 'pull_request'
+    needs: [software-tests, firmware-builds]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install PlatformIO
+        run: python -m pip install platformio
+      - name: Build release environments
+        run: |
+          for env in atom-lite esp32dev atom-echo atom-voice m5stack-basic m5stack-core2-aws m5stickc-plus-se lilygo-t-dongle-c5; do
+            if [ "$env" = lilygo-t-dongle-c5 ]; then
+              PLATFORMIO_CORE_DIR="$RUNNER_TEMP/pio-c5" pio run -e "$env"
+            else
+              pio run -e "$env"
+            fi
+            python tools/assemble_release.py --stage "$env"
+          done
+      - name: Assemble firmware artifact
+        run: python tools/assemble_release.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wifi-canary-firmware-${{ github.sha }}
+          path: release
+          if-no-files-found: error

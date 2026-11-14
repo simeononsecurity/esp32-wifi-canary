@@ -1,6 +1,6 @@
 # Travel WiFi Canary
 
-A compact, passive 2.4 GHz WiFi awareness sensor for the **M5Stack Atom Lite** (ESP32).
+A local WiFi threat-awareness sensor for ESP32 boards. Atom Lite stays the primary target.
 
 Plug it in. It learns your environment. It watches quietly. The RGB LED tells you what it sees.
 
@@ -185,7 +185,7 @@ threat disappears without needing a reboot.
 
 ## Hardware
 
-**Target:** M5Stack Atom Lite
+**Primary target:** M5Stack Atom Lite
 
 | Component | Detail |
 |-----------|--------|
@@ -196,6 +196,8 @@ threat disappears without needing a reboot.
 | Power | USB-C, ~80–120 mA scanning |
 
 No external components required.
+
+Seven more profiles share the same detection core. See `docs/hardware-matrix.md` for build status and `docs/context/target-devices-and-pins.md` for pins, libraries, and target order. The sibling-repository PlatformIO comparison is in `docs/context/`. These profiles have build verification only. No live hardware result is claimed in this branch.
 
 ---
 
@@ -211,6 +213,15 @@ pio run -e atom-lite --target upload
 pio device monitor -b 115200
 ```
 
+### Native tests
+
+The parsing, scoring, baseline-comparison, and JSON event code runs on the host without an ESP32:
+
+```bash
+pio test -e native
+python -m unittest discover -s tools -p 'test_*.py'
+```
+
 ### Generic ESP32 DevKit (bench testing)
 
 ```bash
@@ -219,13 +230,35 @@ pio run -e esp32dev --target upload
 
 DevKit build uses GPIO 2 (onboard LED, binary on/off). All detection logic is identical.
 
+### Browser installer and dashboard
+
+Build and stage all eight targets with `tools/assemble_release.py`, then serve `release/web/` from HTTPS or localhost. The assembled page includes a pinned local ESP Web Tools installer, checks selected firmware files, flashes a CRC-protected configuration with the firmware, reads Web Serial events, and exports JSON or CSV. See `docs/quick-start.md`.
+
+### Multi-unit monitoring
+
+```bash
+python tools/multi_monitor.py --json session.json --csv session.csv
+```
+
+The collector opens one reader per serial port, reconnects after disconnects, groups events by stable device ID, and keeps bounded session memory.
+
+### Provisioning
+
+```bash
+python tools/provision.py --board atom-lite --repeat
+```
+
+The provisioning tool reads each hardware MAC, blocks duplicate units in one run, flashes through PlatformIO, and waits for the boot event.
+
 ---
 
 ## Serial Output
 
+Firmware keeps the readable `[canary]` lines and also emits schema-versioned JSON Lines for dashboards and multi-device tools. Each structured event includes a stable device ID, firmware version, board, uptime, state, score, detector ID, radio context, and queue-drop health. See `docs/architecture/event-schema.md` for the contract.
+
 ```
 ================================
- Travel WiFi Canary v1.1
+ Travel WiFi Canary v1.2.0-dev
  Passive 2.4 GHz awareness
 ================================
 [canary] setup done — starting baseline learning
@@ -270,6 +303,8 @@ Press the button (GPIO 39) to:
 - **2.4 GHz only.** 5 GHz and 6 GHz are not covered.
 - **Scan gap.** The ESP32 radio switches between promiscuous and scan mode; deauth events
   during the ~3 s scan window will not be captured.
+- **Passive discovery takes longer.** AP discovery explicitly requests passive scan mode, so
+  the firmware does not send probe requests while building or refreshing its baseline.
 
 ---
 
@@ -277,8 +312,14 @@ Press the button (GPIO 39) to:
 
 ```
 wifi-canary/
-├── main.cpp              # All firmware logic
-├── platformio.ini        # Build environments (atom-lite, esp32dev)
-├── partitions_4mb.csv    # 4MB flash partition table
-└── README.md             # This file
+├── canary_core.h         # Host-tested detection logic
+├── canary_board.h        # Capability-based board outputs
+├── canary_config.h       # Fixed configuration contract
+├── canary_event*.h       # Serial events and flash history
+├── main.cpp              # Radio and firmware orchestration
+├── platformio.ini        # Native and board environments
+├── test/                 # Native Unity tests and fixtures
+├── tools/                # Parsers, monitoring, replay, provisioning
+├── web/                  # Static installer and local dashboard
+└── docs/                 # User, protocol, security, and release guides
 ```

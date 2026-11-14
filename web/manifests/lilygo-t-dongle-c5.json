@@ -1,0 +1,1 @@
+{"name":"WiFi Canary","version":"1.2.0-dev","new_install_prompt_erase":false,"builds":[{"chipFamily":"ESP32-C5","parts":[{"path":"../firmware/lilygo-t-dongle-c5/bootloader.bin","offset":8192},{"path":"../firmware/lilygo-t-dongle-c5/partitions.bin","offset":32768},{"path":"../firmware/lilygo-t-dongle-c5/firmware.bin","offset":65536}]}]}

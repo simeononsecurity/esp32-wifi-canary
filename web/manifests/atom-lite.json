@@ -1,0 +1,1 @@
+{"name":"WiFi Canary","version":"1.2.0-dev","new_install_prompt_erase":false,"builds":[{"chipFamily":"ESP32","parts":[{"path":"../firmware/atom-lite/bootloader.bin","offset":4096},{"path":"../firmware/atom-lite/partitions.bin","offset":32768},{"path":"../firmware/atom-lite/firmware.bin","offset":65536}]}]}
